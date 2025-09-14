@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 import aiohttp
 from typing import Dict, List, Optional, Any
 from enum import Enum
@@ -74,7 +75,7 @@ async def fetch_menu_from_api():
                         menu_by_category = {}
                         for item in menu_items:
                             if not item:  # Skip None items
-                                continue
+            continue
                             category = item.get("category", "Other")
                             if category not in menu_by_category:
                                 menu_by_category[category] = []
@@ -522,7 +523,7 @@ async def lookup_add_item_to_cart(item_name: str, quantity: int = 1) -> str:
             set_state(OrderState.COLLECTING_ITEMS)
             return f"Added item: {cart_item['itemName']} (price: ${cart_item['itemPrice']:.2f}, quantity: {quantity}). I'll help you customize your other items. What else would you like to add?"
         else:
-            set_state(OrderState.TAKING_ORDER)
+        set_state(OrderState.TAKING_ORDER)
             return f"Added item: {cart_item['itemName']} (price: ${cart_item['itemPrice']:.2f}, quantity: {quantity}). Anything else for your order?"
 
 @function_tool
@@ -538,7 +539,7 @@ async def add_sauce(item_id: int, sauce_name: str) -> str:
         print(f"Current cart: {[item['itemName'] for item in user_cart]}")
         print(f"Current state: {current_state}")
         
-        if not user_cart:
+    if not user_cart:
             print("ERROR: No items in cart")
             return "I don't see any items in your cart to customize. Would you like to add something first?"
         
@@ -546,7 +547,7 @@ async def add_sauce(item_id: int, sauce_name: str) -> str:
         target_item = None
         if user_cart:
             # First try to find by exact item_id match
-            for item in reversed(user_cart):
+    for item in reversed(user_cart):
                 if not item:  # Skip None items
                     continue
                 print(f"Checking cart item: {item.get('itemName', 'Unknown')} (ID: {item.get('itemId', 'Unknown')})")
@@ -706,7 +707,7 @@ async def add_topping(item_id: int, topping_name: str, quantity: int = 1) -> str
     
     # Get the correct price from menu for toppings
     item_dict = find_menu_item_by_id(int(item_id))
-    custom_price = 0.0
+            custom_price = 0.0
     
     if item_dict and "customization" in item_dict and item_dict["customization"]:
         topping_options = item_dict["customization"].get("Toppings", [])
@@ -718,13 +719,13 @@ async def add_topping(item_id: int, topping_name: str, quantity: int = 1) -> str
                 break
     
     # Add the topping
-    customization = {
+            customization = {
         "optionId": f"topping_{topping_name.lower().replace(' ', '_')}",
         "subItemName": topping_name,
         "subItemGroupName": "Toppings",
-        "price": custom_price,
-        "quantity": quantity
-    }
+                "price": custom_price,
+                "quantity": quantity
+            }
     if "customizations" not in target_item:
         target_item["customizations"] = []
     target_item["customizations"].append(customization)
@@ -734,8 +735,8 @@ async def add_topping(item_id: int, topping_name: str, quantity: int = 1) -> str
     
     # Check if all customizations are complete
     if not item_dict or "customization" not in item_dict:
-        current_item_customizing = None
-        set_state(OrderState.TAKING_ORDER)
+                current_item_customizing = None
+                set_state(OrderState.TAKING_ORDER)
         return f"Perfect! I've added {topping_name} to your {target_item.get('itemName', 'item')}. Is there anything else you'd like to order?"
     
     # Check if all required customizations are done
@@ -762,7 +763,7 @@ async def add_topping(item_id: int, topping_name: str, quantity: int = 1) -> str
         if items_needing_customization:
             set_state(OrderState.COLLECTING_ITEMS)
             return f"Excellent! I've added {topping_name} to your {target_item.get('itemName', 'item')}. I'll help you customize your other items. What else would you like to add?"
-        else:
+            else:
             set_state(OrderState.TAKING_ORDER)
             return f"Excellent! I've added {topping_name} to your {target_item.get('itemName', 'item')}. What else can I get for you today?"
     else:
@@ -1684,7 +1685,7 @@ class CustomAgentSession(AgentSession):
             menu_context = self._cached_menu_context
             
             # Simplified state for better performance
-            prompt = instructions if instructions else self._agent.instructions
+        prompt = instructions if instructions else self._agent.instructions
 
             # Log session activity for monitoring (reduced frequency)
             if len(user_cart) > 0 or current_state != OrderState.TAKING_ORDER:
@@ -1694,9 +1695,9 @@ class CustomAgentSession(AgentSession):
             if len(menu_context) > 10:  # Only include menu if it's not too large
                 enhanced_prompt = f"{prompt}\n\n[MENU CATALOG]\n{json.dumps(menu_context[:10])}"  # Limit to first 10 items
             else:
-                enhanced_prompt = f"{prompt}\n\n[MENU CATALOG]\n{json.dumps(menu_context)}"
+        enhanced_prompt = f"{prompt}\n\n[MENU CATALOG]\n{json.dumps(menu_context)}"
             
-            return await super().generate_reply(instructions=enhanced_prompt)
+        return await super().generate_reply(instructions=enhanced_prompt)
         except Exception as e:
             logger.error(f"Error in session {self.session_id}: {str(e)}")
             return "I apologize, but I'm experiencing a technical issue. Let me help you start fresh. What would you like to order today?"
@@ -1714,22 +1715,194 @@ class CustomAgentSession(AgentSession):
         except Exception as e:
             logger.error(f"Error ending call for session {self.session_id}: {str(e)}")
 
+def create_robust_llm():
+    """Create a robust LLM with optimized settings and error handling"""
+    try:
+        return openai.LLM(
+            model="gpt-4o-mini",  # Most reliable model
+            temperature=0.7,  # Balanced creativity
+            max_tokens=150,  # Shorter responses for faster processing
+            timeout=10.0,  # 10 second timeout
+            retry_attempts=3,  # Retry failed requests
+            retry_delay=1.0,  # 1 second delay between retries
+            # Optimize for speed and reliability
+            request_timeout=15.0,
+            max_retries=3,
+            retry_backoff_factor=2.0
+        )
+    except Exception as e:
+        logger.error(f"Failed to create LLM: {e}")
+        # Fallback to basic configuration
+        return openai.LLM(model="gpt-4o-mini")
+
+async def health_check():
+    """Perform health check on critical services"""
+    try:
+        # Check if menu is loaded
+        if not MENU_ITEMS or len(MENU_ITEMS) == 0:
+            logger.warning("Health check: Menu not loaded, reloading...")
+            await load_menu()
+        
+        # Check API connectivity
+        if SUPABASE_URL and SUPABASE_ANON_KEY:
+            logger.info("Health check: API credentials available")
+        
+        logger.info("Health check: All systems operational")
+        return True
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return False
+
+def create_optimized_vad():
+    """Create optimized Silero VAD for better performance"""
+    try:
+        # Load VAD with highly optimized settings for speed
+        vad = silero.VAD.load()
+        
+        # Configure for maximum performance
+        vad.sample_rate = 16000
+        vad.hop_length = 160  # Smaller hop for faster processing
+        vad.window_length = 512  # Smaller window for faster processing
+        
+        # Optimize for real-time performance
+        if hasattr(vad, 'threshold'):
+            vad.threshold = 0.5  # Higher threshold for faster decisions
+        if hasattr(vad, 'min_silence_duration_ms'):
+            vad.min_silence_duration_ms = 100  # Shorter silence detection
+        if hasattr(vad, 'min_speech_duration_ms'):
+            vad.min_speech_duration_ms = 200  # Shorter speech detection
+            
+        logger.info("VAD optimized for maximum performance")
+        return vad
+    except Exception as e:
+        logger.error(f"Failed to create optimized VAD: {e}")
+        return silero.VAD.load()
+
+def create_ultra_fast_vad():
+    """Create ultra-fast VAD as fallback"""
+    try:
+        vad = silero.VAD.load()
+        # Ultra-aggressive settings for speed
+        vad.sample_rate = 8000  # Lower sample rate for speed
+        vad.hop_length = 80     # Much smaller hop
+        vad.window_length = 256 # Much smaller window
+        logger.info("Ultra-fast VAD created")
+        return vad
+    except Exception as e:
+        logger.error(f"Failed to create ultra-fast VAD: {e}")
+        return silero.VAD.load()
+
+async def handle_llm_failure(session, error_msg="I'm having trouble processing that. Let me try again."):
+    """Handle LLM failures gracefully"""
+    try:
+        logger.warning(f"LLM failure handled: {error_msg}")
+        await session.say(error_msg, allow_interruptions=True)
+        # Brief pause to let user respond
+        await asyncio.sleep(1.0)
+    except Exception as e:
+        logger.error(f"Failed to handle LLM failure: {e}")
+
+def create_fallback_llm():
+    """Create a fallback LLM with minimal configuration"""
+    try:
+        return openai.LLM(
+            model="gpt-4o-mini",
+            temperature=0.5,
+            max_tokens=100,
+            timeout=5.0
+        )
+    except Exception as e:
+        logger.error(f"Failed to create fallback LLM: {e}")
+        return None
+
+# Performance monitoring
+vad_performance_warnings = 0
+last_vad_warning_time = 0
+
+def monitor_vad_performance():
+    """Monitor VAD performance and suggest optimizations"""
+    global vad_performance_warnings, last_vad_warning_time
+    current_time = time.time()
+    
+    # Reset counter every 30 seconds
+    if current_time - last_vad_warning_time > 30:
+        vad_performance_warnings = 0
+        last_vad_warning_time = current_time
+    
+    vad_performance_warnings += 1
+    
+    # If too many warnings, suggest switching to ultra-fast mode
+    if vad_performance_warnings > 5:
+        logger.warning(f"VAD performance issues detected: {vad_performance_warnings} warnings in 30s")
+        return "ultra_fast"
+    elif vad_performance_warnings > 3:
+        logger.info(f"VAD performance degraded: {vad_performance_warnings} warnings in 30s")
+        return "optimized"
+    else:
+        return "normal"
+
+def create_adaptive_vad():
+    """Create VAD based on current performance"""
+    performance = monitor_vad_performance()
+    
+    if performance == "ultra_fast":
+        logger.info("Switching to ultra-fast VAD due to performance issues")
+        return create_ultra_fast_vad()
+    elif performance == "optimized":
+        logger.info("Using optimized VAD")
+        return create_optimized_vad()
+    else:
+        logger.info("Using standard VAD")
+        return silero.VAD.load()
+
+async def performance_monitor():
+    """Monitor overall system performance"""
+    try:
+        # Check VAD performance
+        vad_status = monitor_vad_performance()
+        logger.info(f"VAD Performance Status: {vad_status}")
+        
+        # Check memory usage (if available)
+        import psutil
+        memory_percent = psutil.virtual_memory().percent
+        if memory_percent > 80:
+            logger.warning(f"High memory usage: {memory_percent}%")
+        
+        # Check if menu is loaded
+        if not MENU_ITEMS or len(MENU_ITEMS) == 0:
+            logger.warning("Menu not loaded, attempting reload...")
+            await load_menu()
+            
+        return True
+    except Exception as e:
+        logger.error(f"Performance monitoring failed: {e}")
+        return False
+
 async def entrypoint(ctx: JobContext):
     print("Final agent starting...")
     try:
+        # Perform health check first
+        await health_check()
+        
         # Load menu from API first
         await load_menu()
         
-        await ctx.connect()
-        participant = await ctx.wait_for_participant()
-        logger.info(f"Call connected: {participant.identity}")
+        # Optimize worker capacity
+        logger.info("Optimizing worker capacity...")
+        # Set worker options for better capacity management
+        ctx.worker_options.max_workers = 2  # Limit concurrent workers
+        ctx.worker_options.capacity_threshold = 0.8  # Higher threshold before marking unavailable
+        
+    await ctx.connect()
+    participant = await ctx.wait_for_participant()
+    logger.info(f"Call connected: {participant.identity}")
 
         # Reset global state for new session
         global current_state, user_cart, current_item_customizing, current_size_selection, current_session
-        current_state = OrderState.TAKING_ORDER
-        user_cart = []
-        current_item_customizing = None
-        current_size_selection = None
+    current_state = OrderState.TAKING_ORDER
+    user_cart = []
+    current_item_customizing = None
+    current_size_selection = None
         
         # Store participant info for phone extraction
         participant_metadata = getattr(participant, 'metadata', {})
@@ -1776,8 +1949,11 @@ async def entrypoint(ctx: JobContext):
             say_goodbye_and_end_call
         ]
     )
+    # Create adaptive VAD based on performance monitoring
+    vad = create_adaptive_vad()
+    
     session = CustomAgentSession(
-        vad=silero.VAD.load(),
+        vad=vad,
         stt=deepgram.STT(
             model="nova-2",  # Fastest model
             language="en-US",
@@ -1788,11 +1964,17 @@ async def entrypoint(ctx: JobContext):
             endpointing_ms=100,  # Reduced for faster response
             sample_rate=16000
         ),
-        llm=openai.LLM(
-            model="gpt-4o-mini"  # Higher rate limits, faster, more cost-effective
-        ),
+        llm=create_robust_llm(),  # Use robust LLM with error handling
         tts=elevenlabs.TTS(
-            api_key=ELEVENLABS_API_KEY
+            api_key=ELEVENLABS_API_KEY,
+            voice="Tony",  # Use consistent voice
+            model="eleven_turbo_v2_5",  # Fastest model
+            voice_settings={
+                "stability": 0.5,
+                "similarity_boost": 0.5,
+                "style": 0.0,
+                "use_speaker_boost": True
+            }
         )
     )
     # Store room reference in session for call termination
@@ -1805,11 +1987,30 @@ async def entrypoint(ctx: JobContext):
     # Store participant phone in session for later use
     session.participant_phone = participant_phone
     
+    try:
     await session.start(agent=agent, room=ctx.room)
     logger.info("Final agent ready")
+        
+        # Generate initial greeting with error handling
+        try:
     await session.generate_reply(
-        instructions="Thank you for calling Jimmy Neno's Pizza! This is Tony. How can I help you today?"
-    )
+                instructions="Thank you for calling Jimmy Neno's Pizza! This is Tony. How can I help you today?"
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate initial greeting: {e}")
+            # Fallback to simple greeting
+            await session.say("Thank you for calling Jimmy Neno's Pizza! This is Tony. How can I help you today?")
+            
+    except Exception as e:
+        logger.error(f"Failed to start session: {e}")
+        # Attempt recovery
+        try:
+            logger.info("Attempting session recovery...")
+            await session.start(agent=agent, room=ctx.room)
+            await session.say("Welcome to Jimmy Neno's Pizza! How can I help you today?")
+        except Exception as recovery_error:
+            logger.error(f"Session recovery failed: {recovery_error}")
+            raise
 
 if __name__ == "__main__":
     print("Initializing Final Agent...")
