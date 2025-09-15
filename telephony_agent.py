@@ -17,7 +17,7 @@ logger = logging.getLogger("jimmy_nenos_final_agent")
 
 # ElevenLabs API Key
 ELEVENLABS_API_KEY = "sk_125997802322986a85cade2a70282ed7b31bd68f0a9b997c"
-
+ELEVENLABS_VOICE_ID = "KFNvimmuOIRv7m64kCwe"
 print("Starting Jimmy Neno's Final Agent...")
 logger.info("Final agent initialization")
 
@@ -1967,6 +1967,7 @@ async def entrypoint(ctx: JobContext):
         llm=create_robust_llm(),  # Use robust LLM with error handling
         tts=elevenlabs.TTS(
             api_key=ELEVENLABS_API_KEY,
+            voice_id=ELEVENLABS_VOICE_ID,
             voice="Tony",  # Use consistent voice
             model="eleven_turbo_v2_5",  # Fastest model
             voice_settings={
