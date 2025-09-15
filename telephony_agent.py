@@ -32,6 +32,15 @@ current_item_customizing = None
 current_size_selection = None  # Used for staged size selection
 current_session = None  # Store current session for call termination
 
+# Conversation context to prevent repetitive questions
+conversation_context = {
+    "last_item_mentioned": None,
+    "last_size_asked": None,
+    "last_customization_asked": None,
+    "items_in_cart": [],
+    "current_question": None
+}
+
 # Supabase configuration
 SUPABASE_URL = "https://obfjfvxwqmhrzsntxkfy.supabase.co/functions/v1/fetch_menu"
 SUPABASE_ORDER_URL = "https://obfjfvxwqmhrzsntxkfy.supabase.co/functions/v1/post_order"
@@ -43,7 +52,7 @@ SUPABASE_HEADERS = {
 RESTAURANT_ID = "8f025919"  # Default restaurant ID
 
 async def fetch_menu_from_api():
-    """Fetch menu from Supabase API"""
+    """Fetch menu from Supabase API and return categorized structure"""
     try:
         print("🔄 Fetching menu from Supabase API...")
         print(f"🔗 API URL: {SUPABASE_URL}")
@@ -102,6 +111,46 @@ async def fetch_menu_from_api():
         logger.error(f"❌ Error fetching menu from API: {str(e)}")
         return None
 
+async def fetch_raw_menu_from_api():
+    """Fetch raw menu data from Supabase API (flat array structure)"""
+    try:
+        print("🔄 Fetching raw menu data from Supabase API...")
+        print(f"🔗 API URL: {SUPABASE_URL}")
+        print(f"🔑 Headers: {SUPABASE_HEADERS}")
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                SUPABASE_URL,
+                headers=SUPABASE_HEADERS,
+                json={"name": "Functions"}
+            ) as response:
+                print(f"📡 Raw API Response Status: {response.status}")
+                
+                if response.status == 200:
+                    data = await response.json()
+                    
+                    if "menu" in data and isinstance(data["menu"], list):
+                        menu_items = data["menu"]
+                        print(f"📊 Raw Menu Items Count: {len(menu_items)}")
+                        logger.info(f"Raw menu fetched successfully from API: {len(menu_items)} items")
+                        return data  # Return the full data structure
+                    else:
+                        print("❌ Invalid menu structure in raw API response")
+                        return None
+                else:
+                    error_text = await response.text()
+                    print(f"❌ Raw API request failed with status {response.status}")
+                    print(f"❌ Error response: {error_text}")
+                    logger.error(f"❌ Raw API request failed with status {response.status}: {error_text}")
+                    return None
+    except Exception as e:
+        print(f"❌ Exception during raw API call: {str(e)}")
+        print(f"❌ Exception type: {type(e).__name__}")
+        import traceback
+        print(f"❌ Traceback: {traceback.format_exc()}")
+        logger.error(f"❌ Error fetching raw menu from API: {str(e)}")
+        return None
+
 async def submit_order_to_api(order_data: dict) -> bool:
     """Submit order to Supabase API"""
     try:
@@ -109,6 +158,19 @@ async def submit_order_to_api(order_data: dict) -> bool:
         print(f"🔗 Order API URL: {SUPABASE_ORDER_URL}")
         print(f"🔑 Headers: {SUPABASE_HEADERS}")
         print(f"📦 Order Data: {json.dumps(order_data, indent=2)}")
+        
+        # Validate order data before submission
+        if not order_data.get('id'):
+            print("❌ Order data missing ID")
+            return False
+        
+        if not order_data.get('name'):
+            print("❌ Order data missing customer name")
+            return False
+        
+        if not order_data.get('order_json', {}).get('items'):
+            print("❌ Order data missing items")
+            return False
         
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -134,8 +196,7 @@ async def submit_order_to_api(order_data: dict) -> bool:
         print(f"❌ Exception during order submission: {str(e)}")
         print(f"❌ Exception type: {type(e).__name__}")
         import traceback
-        print(f"❌ Traceback: {traceback.format_exc()}")
-        logger.error(f"❌ Error submitting order: {str(e)}")
+        traceback.print_exc()
         return False
 
 def format_cart_for_api(cart: list, customer_name: str, phone_number: str = None) -> dict:
@@ -146,8 +207,24 @@ def format_cart_for_api(cart: list, customer_name: str, phone_number: str = None
     # Generate unique order ID
     order_id = f"order_{uuid.uuid4().hex[:8]}"
     
-    # Calculate total
-    total = sum(item.get("itemPrice", 0) * item.get("quantity", 1) for item in cart if item)
+    # Calculate total including customizations
+    total = 0
+    for item in cart:
+        if not item:
+            continue
+        item_price = item.get("itemPrice", 0)
+        quantity = item.get("quantity", 1)
+        item_total = item_price * quantity
+        
+        # Add customization prices
+        customizations = item.get("customizations", [])
+        for custom in customizations:
+            if custom and isinstance(custom, dict):
+                custom_price = custom.get("price", 0.0)
+                custom_quantity = custom.get("quantity", 1)
+                item_total += custom_price * custom_quantity
+        
+        total += item_total
     
     # Format items for API
     api_items = []
@@ -196,38 +273,21 @@ def format_cart_for_api(cart: list, customer_name: str, phone_number: str = None
     return order_data
 
 async def load_menu():
-    """Load menu with caching - check cache first, then API if needed"""
+    """Always fetch fresh menu data from Supabase API - no caching"""
     global MENU, ITEM_CATALOG
     
-    print("🔄 Starting menu loading process...")
+    print("🔄 Fetching fresh menu data from Supabase API...")
     
-    # Check if we have a valid cache first
-    if is_cache_valid(CACHE_FILE):
-        print("📂 Valid cache found, loading from cache...")
-        cached_menu = load_menu_cache()
-        if cached_menu:
-            MENU = cached_menu
-            total_items = sum(len(items) for items in MENU.values())
-            print(f"✅ Menu loaded from cache with {total_items} items across {len(MENU)} categories")
-            
-            # Rebuild ITEM_CATALOG with the cached menu
-            ITEM_CATALOG = build_item_catalog(MENU)
-            print(f"📋 ITEM_CATALOG built with {len(ITEM_CATALOG)} items")
-            return
-    
-    # Cache is invalid or doesn't exist, fetch from API
-    print("🔄 Cache invalid or missing, fetching from API...")
-    api_menu = await fetch_menu_from_api()
+    # Always fetch from API - no caching
+    api_menu = await fetch_raw_menu_from_api()
     print(f"🔍 API Menu Result: {api_menu is not None}")
     
-    if api_menu:
-        MENU = api_menu
+    if api_menu and "menu" in api_menu:
+        # Convert new flat array structure to old categorized structure for compatibility
+        MENU = convert_menu_to_categories(api_menu["menu"])
         total_items = sum(len(items) for items in MENU.values())
         print(f"✅ Menu loaded from Supabase API with {total_items} items across {len(MENU)} categories")
         print(f"📋 Categories: {', '.join(MENU.keys())}")
-        
-        # Save to cache for future use
-        save_menu_cache(MENU)
         
         # Rebuild ITEM_CATALOG with the loaded menu
         ITEM_CATALOG = build_item_catalog(MENU)
@@ -251,48 +311,6 @@ async def load_menu():
 MENU = {}
 ITEM_CATALOG = []
 
-# Cache configuration
-CACHE_FILE = "menu_cache.json"
-CACHE_DURATION_HOURS = 24  # Cache for 24 hours
-
-def is_cache_valid(cache_file: str) -> bool:
-    """Check if cache file exists and is still valid"""
-    if not os.path.exists(cache_file):
-        return False
-    
-    try:
-        import time
-        cache_time = os.path.getmtime(cache_file)
-        current_time = time.time()
-        age_hours = (current_time - cache_time) / 3600
-        return age_hours < CACHE_DURATION_HOURS
-    except Exception:
-        return False
-
-def save_menu_cache(menu_data: dict):
-    """Save menu data to cache file"""
-    try:
-        import time
-        cache_data = {
-            "timestamp": time.time(),
-            "menu": menu_data
-        }
-        with open(CACHE_FILE, 'w') as f:
-            json.dump(cache_data, f, indent=2)
-        print(f"💾 Menu cached to {CACHE_FILE}")
-    except Exception as e:
-        print(f"❌ Failed to save cache: {str(e)}")
-
-def load_menu_cache() -> dict:
-    """Load menu data from cache file"""
-    try:
-        with open(CACHE_FILE, 'r') as f:
-            cache_data = json.load(f)
-        print(f"📂 Menu loaded from cache: {CACHE_FILE}")
-        return cache_data.get("menu", {})
-    except Exception as e:
-        print(f"❌ Failed to load cache: {str(e)}")
-        return {}
 
 def clean_item_name(name: str) -> str:
     if not name:  # Handle None or empty string
@@ -300,6 +318,249 @@ def clean_item_name(name: str) -> str:
     if name.startswith("#"):
         return name.split("-", 1)[-1].strip()
     return name.strip()
+
+def get_accent_friendly_clarification(context: str = "", options: list = None) -> str:
+    """Generate accent-friendly clarification prompts that work across all English accents"""
+    base_phrase = "I didn't hear that properly, could you please repeat?"
+    
+    if context and options:
+        return f"{base_phrase} {context}: {', '.join(options)}"
+    elif context:
+        return f"{base_phrase} {context}"
+    else:
+        return base_phrase
+
+def validate_item_exists(item_name: str) -> tuple[bool, Optional[Dict], str]:
+    """Validate if an item exists in the menu and return detailed info"""
+    item = get_menu_item_by_name(item_name)
+    if not item:
+        return False, None, f"Sorry, '{item_name}' is not available on our menu."
+    
+    return True, item, ""
+
+def get_popular_suggestions() -> str:
+    """Get popular menu items as suggestions"""
+    suggestions = []
+    
+    # Get popular items from menu
+    if hasattr(current_session, 'menu_data') and current_session.menu_data:
+        for item in current_session.menu_data:
+            if item and item.get('category') == 'Popular':
+                suggestions.append(item.get('short_name', item.get('name', '')))
+                if len(suggestions) >= 3:  # Limit to 3 suggestions
+                    break
+    
+    if suggestions:
+        return f"Some popular items we have are: {', '.join(suggestions)}"
+    else:
+        return "Some popular items we have are: Wings, 12 Inch Pizza, Personal Pizza"
+
+def update_conversation_context(item_name=None, size_asked=None, customization_asked=None, question=None):
+    """Update conversation context to prevent repetitive questions"""
+    global conversation_context
+    
+    if item_name:
+        conversation_context["last_item_mentioned"] = item_name
+    if size_asked:
+        conversation_context["last_size_asked"] = size_asked
+    if customization_asked:
+        conversation_context["last_customization_asked"] = customization_asked
+    if question:
+        conversation_context["current_question"] = question
+    
+    # Update items in cart
+    conversation_context["items_in_cart"] = [item.get("itemName", "") for item in user_cart if item]
+
+def has_been_asked(question_type, item_name=None):
+    """Check if we've already asked a specific question to prevent repetition"""
+    global conversation_context
+    
+    if question_type == "size" and conversation_context["last_size_asked"] == item_name:
+        return True
+    elif question_type == "customization" and conversation_context["last_customization_asked"] == item_name:
+        return True
+    elif question_type == "item" and conversation_context["last_item_mentioned"] == item_name:
+        return True
+    
+    return False
+
+def get_current_item_id():
+    """Get the current item ID that needs customization"""
+    global current_item_customizing, user_cart
+    
+    if current_item_customizing:
+        return current_item_customizing.get('id')
+    
+    # If no current item, get the most recent item in cart
+    if user_cart:
+        return user_cart[-1].get('itemId')
+    
+    return None
+
+def format_price_for_speech(price: float) -> str:
+    """Convert price to spoken format (e.g., 10.00 -> ten dollars)"""
+    if price == 0:
+        return "free"
+    elif price < 1:
+        cents = int(price * 100)
+        return f"{cents} cents"
+    elif price == int(price):
+        # Whole number
+        amount = int(price)
+        if amount == 1:
+            return "one dollar"
+        else:
+            return f"{amount} dollars"
+    else:
+        # Decimal
+        dollars = int(price)
+        cents = int((price - dollars) * 100)
+        if dollars == 0:
+            return f"{cents} cents"
+        elif dollars == 1:
+            return f"one dollar and {cents} cents"
+        else:
+            return f"{dollars} dollars and {cents} cents"
+
+def validate_item_mentioned(item_name: str) -> tuple[bool, str]:
+    """Immediately validate if an item exists when mentioned in conversation"""
+    item = get_menu_item_by_name(item_name)
+    if not item:
+        suggestions = get_popular_suggestions()
+        return False, f"Sorry, '{item_name}' is not available on our menu. {suggestions}. What would you like to order instead?"
+    
+    return True, f"Great! I have '{item.get('name', item_name)}' available. What size would you like?"
+
+@function_tool
+async def select_size(item_name: str, size_name: str) -> str:
+    """Select a size for an item and add it to the cart"""
+    global current_item_customizing, current_state, current_size_selection
+    
+    # Parse the item name to get the base name
+    specifications = parse_item_specifications(item_name)
+    base_item_name = specifications["base_name"]
+    
+    # Validate item exists in menu
+    item_exists, item, error_message = validate_item_exists(base_item_name)
+    if not item_exists:
+        suggestions = get_popular_suggestions()
+        return f"{error_message} {suggestions}. What would you like to order instead?"
+    
+    # Find matching size
+    selected_size = None
+    if item.get("sizes") and item["sizes"]:
+        for size in item["sizes"]:
+            if size.get('name', '').lower() == size_name.lower():
+                selected_size = size
+                break
+        
+        if not selected_size:
+            # Size not found, show available sizes
+            size_options = [f"{s.get('name', '')} ({format_price_for_speech(s.get('price', 0))})" for s in item["sizes"]]
+            return f"Sorry, I don't have '{size_name}' available. Available sizes: {', '.join(size_options)}. What size would you like?"
+    else:
+        # No sizes, use base price
+        selected_size = {"name": "Regular", "price": item.get("price", 0)}
+    
+    # Create cart item with selected size
+    price = selected_size.get("price", item.get("price", 0))
+    short_name = item.get("short_name")
+    display_name = clean_item_name(short_name or item.get("name", "") or "")
+    
+    cart_item = {
+        "itemId": item.get("id"),
+        "itemName": display_name,
+        "itemPrice": price,
+        "quantity": 1,
+        "selectedSize": selected_size.get("name", "Regular"),
+        "customizations": []
+    }
+    
+    # Add to cart
+    user_cart.append(cart_item)
+    current_item_customizing = item
+    current_size_selection = selected_size
+    
+    # Check if item needs customizations
+    customization_type = get_item_customization_type(base_item_name)
+    
+    if customization_type == 'sauce':
+        set_state(OrderState.CUSTOMIZING)
+        if base_item_name.lower() == 'wings':
+            return f"Perfect! I've added {display_name} ({selected_size.get('name')} size) for {format_price_for_speech(price)}. What sauce would you like? We have Buffalo, BBQ, Garlic Parm, Honey Mustard, Mild, Hot, Ranch, or Blue Cheese. Just say the sauce name and I'll add it!"
+        else:
+            return f"Perfect! I've added {display_name} ({selected_size.get('name')} size) for ${price:.2f}. What sauce would you like? We have Buffalo, BBQ, Garlic Parm, Honey Mustard, Mild, Hot, Ranch, or Blue Cheese."
+    elif customization_type == 'toppings':
+        set_state(OrderState.CUSTOMIZING)
+        return f"Great! I've added {display_name} ({selected_size.get('name')} size) for ${price:.2f}. What toppings would you like? We have Pepperoni, Italian Sausage, Ground Beef, Black Sheep Bacon, Ham, Salami, Mushrooms, Green Peppers, Red Peppers, Onions, Banana Peppers, Black Olives, Tomatoes, Extra Cheese, Mozzarella, or Cheddar."
+    elif customization_type == 'both':
+        set_state(OrderState.CUSTOMIZING)
+        return f"Excellent! I've added {display_name} ({selected_size.get('name')} size) for ${price:.2f}. What toppings would you like, and what sauce would you prefer?"
+    else:
+        # No customizations needed
+        set_state(OrderState.TAKING_ORDER)
+        return f"Perfect! I've added {display_name} ({selected_size.get('name')} size) for ${price:.2f}. Anything else for your order?"
+
+@function_tool
+async def check_item_availability(item_name: str) -> str:
+    """Check if an item is available on the menu and provide immediate feedback"""
+    # Parse the item name to get the base name
+    specifications = parse_item_specifications(item_name)
+    base_item_name = specifications["base_name"]
+    
+    # Validate item exists in menu
+    item_exists, item, error_message = validate_item_exists(base_item_name)
+    
+    if not item_exists:
+        suggestions = get_popular_suggestions()
+        return f"{error_message} {suggestions}. What would you like to order instead?"
+    
+    # Update conversation context
+    update_conversation_context(item_name=base_item_name)
+    
+    # Item exists - provide confirmation and next steps
+    item_name_display = clean_item_name(item.get('short_name') or item.get('name', ''))
+    
+    # Check what customizations are available
+    customization_type = get_item_customization_type(base_item_name)
+    
+    if customization_type == 'sauce':
+        update_conversation_context(customization_asked=base_item_name, question="sauce")
+        return f"Great choice! {item_name_display} is available. What sauce would you like? We have Buffalo, BBQ, Garlic Parm, Honey Mustard, Mild, Hot, Ranch, or Blue Cheese."
+    elif customization_type == 'toppings':
+        update_conversation_context(customization_asked=base_item_name, question="toppings")
+        return f"Perfect! {item_name_display} is available. What toppings would you like? We have Pepperoni, Italian Sausage, Ground Beef, Black Sheep Bacon, Ham, Salami, Mushrooms, Green Peppers, Red Peppers, Onions, Banana Peppers, Black Olives, Tomatoes, Extra Cheese, Mozzarella, or Cheddar."
+    elif customization_type == 'both':
+        update_conversation_context(customization_asked=base_item_name, question="both")
+        return f"Excellent! {item_name_display} is available. What toppings would you like, and what sauce would you prefer?"
+    else:
+        # No customizations needed
+        if item.get('sizes') and len(item['sizes']) > 1:
+            update_conversation_context(size_asked=base_item_name, question="size")
+            size_options = [f"{s.get('name', '')} (${s.get('price', 0):.2f})" for s in item['sizes']]
+            return f"Perfect! {item_name_display} is available. What size would you like? Available sizes: {', '.join(size_options)}"
+        else:
+            # Only one size or no sizes - add directly
+            return await lookup_add_item_to_cart(base_item_name)
+
+def get_item_customization_type(item_name: str) -> str:
+    """Determine what type of customizations an item should have based on actual live menu data"""
+    item = get_menu_item_by_name(item_name)
+    if not item or not item.get('customization'):
+        return 'none'
+    
+    customization = item['customization']
+    has_sauce = 'Sauce' in customization and customization['Sauce']
+    has_toppings = 'Toppings' in customization and customization['Toppings']
+    
+    if has_sauce and has_toppings:
+        return 'both'
+    elif has_sauce:
+        return 'sauce'
+    elif has_toppings:
+        return 'toppings'
+    else:
+        return 'none'
 
 def build_item_catalog(menu: Dict[str, Any]) -> List[Dict[str, Any]]:
     catalog = []
@@ -320,38 +581,131 @@ def build_item_catalog(menu: Dict[str, Any]) -> List[Dict[str, Any]]:
 # ITEM_CATALOG will be built after menu is loaded from API
 ITEM_CATALOG = []
 
-def find_menu_item_by_id(item_id: int) -> Optional[Dict]:
-    for category, items in MENU.items():
-        if not items:  # Skip empty categories
+def convert_menu_to_categories(menu_data):
+    """Convert new flat array menu structure to old categorized structure"""
+    if not menu_data:
+        return {}
+    
+    # Handle both direct array and wrapped object
+    items = menu_data if isinstance(menu_data, list) else menu_data.get('menu', [])
+    
+    categories = {}
+    for item in items:
+        if not item:
             continue
-        for item in items:
-            if not item:  # Skip None items
-                continue
-            if item.get("id") == item_id:
+        
+        category = item.get('category', 'Other')
+        if category not in categories:
+            categories[category] = []
+        categories[category].append(item)
+    
+    return categories
+
+def get_complete_menu_context(menu_data):
+    """Extract complete list of {id, name} pairs from menu data"""
+    if not menu_data or 'menu' not in menu_data:
+        return []
+    
+    menu_context = []
+    for item in menu_data['menu']:
+        if not item or not item.get('id') or not item.get('name'):
+            continue
+        
+        short_name = item.get('short_name')
+        name = clean_item_name(short_name or item.get('name', '') or '')
+        if name:  # Only include items with valid names
+            menu_context.append({
+                "id": item.get('id'),
+                "name": name
+            })
+    
+    return menu_context
+
+def get_menu_item_by_id(item_id: int) -> Optional[Dict]:
+    """Get full menu item details by ID from current session menu data"""
+    # First try session menu data
+    if hasattr(current_session, 'menu_data') and current_session.menu_data:
+        for item in current_session.menu_data:
+            if item and item.get('id') == item_id:
                 return item
+    
+    # Fallback to global menu
+    if MENU:
+        for category, items in MENU.items():
+            for item in items:
+                if item and item.get('id') == item_id:
+                    return item
+    
+    return None
+
+def get_menu_item_by_name(item_name: str) -> Optional[Dict]:
+    """Get full menu item details by name from current session menu data with strict matching"""
+    # First try session menu data
+    if hasattr(current_session, 'menu_data') and current_session.menu_data:
+        normalized_name = item_name.lower().strip()
+        
+        for item in current_session.menu_data:
+            if not item:
+                continue
+                
+            # Check exact name match
+            if item.get('name', '').lower() == normalized_name:
+                return item
+            if item.get('short_name', '').lower() == normalized_name:
+                return item
+                
+            # Check partial match only for very specific cases
+            item_name_lower = item.get('name', '').lower()
+            if normalized_name in item_name_lower and len(normalized_name) > 3:
+                # Only match if the search term is substantial and contained in the item name
+                return item
+    
+    # Fallback to global menu if session data not available
+    if MENU:
+        for category, items in MENU.items():
+            for item in items:
+                if not item:
+                    continue
+                if item.get('name', '').lower() == item_name.lower():
+                    return item
+                if item.get('short_name', '').lower() == item_name.lower():
+                    return item
+    
+    return None
+
+def find_menu_item_by_id(item_id: int) -> Optional[Dict]:
+    if not hasattr(current_session, 'menu_data') or not current_session.menu_data:
+        return None
+    
+    for item in current_session.menu_data:
+        if not item:  # Skip None items
+            continue
+        if item.get("id") == item_id:
+            return item
     return None
 
 def find_menu_item_by_name(name: str) -> Optional[Dict]:
     want = name.lower().strip()
-    for category, items in MENU.items():
-        if not items:  # Skip empty categories
+    if not hasattr(current_session, 'menu_data') or not current_session.menu_data:
+        return None
+    
+    for item in current_session.menu_data:
+        if not item:  # Skip None items
             continue
-        for item in items:
-            if not item:  # Skip None items
-                continue
-            n = clean_item_name(item.get("name", "") or "").lower()
-            short_name = item.get("short_name")
-            short = clean_item_name(short_name or "").lower() if short_name else ""
-            if want == n or want == short or want in n or want in short:
-                return item
+        n = clean_item_name(item.get("name", "") or "").lower()
+        short_name = item.get("short_name")
+        short = clean_item_name(short_name or "").lower() if short_name else ""
+        if want == n or want == short or want in n or want in short:
+            return item
     return None
 
 def get_popular_items() -> str:
     """Get popular items - ONLY from loaded API menu"""
-    if not MENU:
+    if not hasattr(current_session, 'menu_data') or not current_session.menu_data:
         return "I'm sorry, I'm having trouble loading our menu right now."
     
-    popular = MENU.get("Popular", [])[:4]
+    # Filter popular items from session menu data
+    popular = [item for item in current_session.menu_data if item and item.get('category') == 'Popular'][:4]
     result = "Here are our most popular items:\n"
     for item in popular:
         if not item:  # Skip None items
@@ -426,8 +780,13 @@ async def select_size_for_item(item_name: str, size_name: str, quantity: int = 1
             if not options:  # Skip empty options
                 continue
             if group.lower() == "sauce":
-                # Sauce is array of strings
-                sauce_list = [str(o) for o in options if o]
+                # Sauce is array of objects with name and price
+                sauce_list = []
+                for o in options:
+                    if isinstance(o, dict) and o.get("name"):
+                        sauce_list.append(o["name"])
+                    elif isinstance(o, str):
+                        sauce_list.append(o)
                 custom_info.append("Please select one sauce: " + ", ".join(sauce_list))
             elif group.lower() == "toppings":
                 # Toppings is array of objects with name and price
@@ -453,77 +812,287 @@ async def select_size_for_item(item_name: str, size_name: str, quantity: int = 1
         return f"Added item: {cart_item['itemName']} (price: ${cart_item['itemPrice']:.2f}, quantity: {quantity}).\nAnything else for your order?"
 
 # --- Main item add function ---
+def parse_item_specifications(item_name: str) -> dict:
+    """Parse item specifications from user input to extract size, toppings, and sauces"""
+    specifications = {
+        'base_name': item_name,
+        'size': None,
+        'toppings': [],
+        'sauces': []
+    }
+    
+    item_lower = item_name.lower()
+    
+    # Parse size specifications
+    size_keywords = ['small', 'medium', 'large', 'personal', '12 inch', 'half sheet', 'jumbo', 'regular', 'bowl', '10 count', '24 count']
+    for size in size_keywords:
+        if size in item_lower:
+            specifications['size'] = size
+            # Remove size from base name for better matching
+            specifications['base_name'] = specifications['base_name'].replace(size, '').strip()
+            break
+    
+    # Parse sauce specifications
+    sauce_keywords = ['buffalo', 'bbq', 'garlic parm', 'honey mustard', 'mild', 'hot', 'ranch', 'blue cheese', 'sauce']
+    for sauce in sauce_keywords:
+        if sauce in item_lower:
+            specifications['sauces'].append(sauce)
+            # Remove sauce from base name for better matching
+            specifications['base_name'] = specifications['base_name'].replace(sauce, '').strip()
+    
+    # Parse topping specifications
+    topping_keywords = ['pepperoni', 'italian sausage', 'ground beef', 'bacon', 'ham', 'salami', 'mushrooms', 
+                       'green peppers', 'red peppers', 'onions', 'banana peppers', 'black olives', 'tomatoes', 
+                       'extra cheese', 'mozzarella', 'cheddar', 'chicken', 'beef', 'sausage']
+    for topping in topping_keywords:
+        if topping in item_lower:
+            specifications['toppings'].append(topping)
+            # Remove topping from base name for better matching
+            specifications['base_name'] = specifications['base_name'].replace(topping, '').strip()
+    
+    # Special handling for compound items like "Buffalo Chicken Pizza"
+    if 'buffalo chicken' in item_lower:
+        specifications['base_name'] = 'Buffalo Chicken Pizza'
+        # Buffalo Chicken Pizza has no customizations, so clear any parsed customizations
+        specifications['toppings'] = []
+        specifications['sauces'] = []
+    elif 'pierogi' in item_lower:
+        specifications['base_name'] = 'Pierogi Pizza'
+    
+    # Clean up base name
+    specifications['base_name'] = specifications['base_name'].replace('with', '').replace('and', '').strip()
+    
+    return specifications
+
 @function_tool
 async def lookup_add_item_to_cart(item_name: str, quantity: int = 1) -> str:
+    """Look up an item by name and add it to the cart with all customizations in one step"""
     global current_item_customizing, current_state, current_size_selection
-    item = find_menu_item_by_name(item_name)
-    if not item:
-        return f"Sorry, I couldn't find '{item_name}' on our menu. Would you like me to suggest some popular items?"
-    # Sizes logic
-    if "sizes" in item and item["sizes"]:
-        sizes_list = ", ".join([f"{size.get('name', '')} (${size.get('price', 0):.2f})" for size in item["sizes"] if size])
-        current_item_customizing = item  # Save for select_size_for_item call
-        current_size_selection = item
-        set_state(OrderState.CUSTOMIZING)
-        short_name = item.get('short_name')
-        item_name = clean_item_name(short_name or item.get('name', '') or '')
-        return f"Which size would you like for {item_name}? Available: {sizes_list}"
-    # Handle items with sizes (use first size price) or direct price
+    
+    # Parse all customizations from the item name
+    specifications = parse_item_specifications(item_name)
+    base_item_name = specifications["base_name"]
+    
+    # Validate item exists in menu before proceeding
+    item_exists, item, error_message = validate_item_exists(base_item_name)
+    if not item_exists:
+        suggestions = get_popular_suggestions()
+        return f"{error_message} {suggestions}. What would you like to order instead?"
+    
+    # Handle size selection - ask for size if not specified and multiple sizes available
+    selected_size = None
     if item.get("sizes") and item["sizes"]:
-        price = item["sizes"][0].get("price", 0)
+        if specifications['size']:
+            # Find matching size
+            for size in item["sizes"]:
+                if size.get('name', '').lower() == specifications['size'].lower():
+                    selected_size = size
+                    break
+            if not selected_size:
+                # Size not found, ask for size
+                size_options = [f"{s.get('name', '')} (${s.get('price', 0):.2f})" for s in item["sizes"]]
+                return f"Great choice! {item.get('name', base_item_name)} is available. What size would you like? Available sizes: {', '.join(size_options)}"
+        else:
+            # No size specified, ask for size if multiple sizes available
+            if len(item["sizes"]) > 1:
+                size_options = [f"{s.get('name', '')} (${s.get('price', 0):.2f})" for s in item["sizes"]]
+                return f"Perfect! {item.get('name', base_item_name)} is available. What size would you like? Available sizes: {', '.join(size_options)}"
+            else:
+                # Only one size available, use it
+                selected_size = item["sizes"][0]
     else:
-        price = item.get("price", 0)
+        # No sizes, use base price
+        selected_size = {"name": "Regular", "price": item.get("price", 0)}
+    
+    # Calculate base price
+    price = selected_size.get("price", item.get("price", 0))
+    
+    # Create cart item
     short_name = item.get("short_name")
-    item_name = clean_item_name(short_name or item.get("name", "") or "")
+    display_name = clean_item_name(short_name or item.get("name", "") or "")
     cart_item = {
         "itemId": item.get("id"),
-        "itemName": item_name,
+        "itemName": display_name,
         "itemPrice": price,
         "quantity": quantity,
+        "selectedSize": selected_size.get("name", "Regular"),
         "customizations": []
     }
-    # Check for toppings/sauces
-    custom_info = []
+    
+    # Process all customizations at once
+    customizations_added = []
     if "customization" in item and item["customization"]:
-        for group, options in item["customization"].items():
-            if not options:  # Skip empty options
-                continue
-            if group.lower() == "sauce":
-                # Sauce is array of strings
-                sauce_list = [str(o) for o in options if o]
-                custom_info.append("Please select one sauce: " + ", ".join(sauce_list))
-            elif group.lower() == "toppings":
-                # Toppings is array of objects with name and price
-                topping_list = []
-                for o in options:
-                    if isinstance(o, dict) and o.get("name"):
-                        topping_list.append(f"{o['name']} (${o.get('price', 0):.2f})")
-                    elif isinstance(o, str):
-                        topping_list.append(o)
-                custom_info.append("You can select multiple toppings: " + ", ".join(topping_list))
+        # Process sauces - only if item has sauce customization available
+        if item.get("customization") and "Sauce" in item["customization"] and specifications['sauces']:
+            available_sauces = item["customization"]["Sauce"]
+            for sauce_name in specifications['sauces']:
+                # Find matching sauce
+                for sauce in available_sauces:
+                    if isinstance(sauce, dict) and sauce.get('name', '').lower() == sauce_name.lower():
+                        customization = {
+                            "optionId": f"sauce_{sauce_name.lower().replace(' ', '_')}",
+                            "subItemName": sauce.get('name', sauce_name),
+                            "subItemGroupName": "Sauce",
+                            "price": sauce.get('price', 0),
+                            "quantity": 1
+                        }
+                        cart_item["customizations"].append(customization)
+                        cart_item["itemPrice"] += sauce.get('price', 0)  # Add sauce price to total
+                        customizations_added.append(f"sauce: {sauce.get('name', sauce_name)}")
+                        break
+        
+        # Process toppings - only if item has toppings customization available
+        if item.get("customization") and "Toppings" in item["customization"] and specifications['toppings']:
+            available_toppings = item["customization"]["Toppings"]
+            for topping_name in specifications['toppings']:
+                # Find matching topping
+                for topping in available_toppings:
+                    if isinstance(topping, dict) and topping.get('name', '').lower() == topping_name.lower():
+                        customization = {
+                            "optionId": f"topping_{topping_name.lower().replace(' ', '_')}",
+                            "subItemName": topping.get('name', topping_name),
+                            "subItemGroupName": "Toppings",
+                            "price": topping.get('price', 0),
+                            "quantity": 1
+                        }
+                        cart_item["customizations"].append(customization)
+                        cart_item["itemPrice"] += topping.get('price', 0)  # Add topping price to total
+                        customizations_added.append(f"topping: {topping.get('name', topping_name)}")
+                        break
+    
+    # Add to cart
     user_cart.append(cart_item)
     
-    # Check if this item needs customizations
-    if custom_info:
-        # If there are customizations, set the current item and go to customizing state
-        current_item_customizing = item
-        set_state(OrderState.CUSTOMIZING)
-        return (
-            f"Added item: {cart_item['itemName']} (price: ${cart_item['itemPrice']:.2f}, quantity: {quantity}).\n"
-            + "\n".join(custom_info)
-        )
-    else:
-        # No customizations needed for this item
-        current_item_customizing = None
+    # Calculate total price including customizations
+    total_price = cart_item["itemPrice"] * quantity
+    
+    # Build confirmation message
+    response_parts = [f"Perfect! I've added {quantity} {cart_item['itemName']}"]
+    
+    if selected_size.get("name") != "Regular":
+        response_parts.append(f"({selected_size.get('name')} size)")
+    
+    if customizations_added:
+        response_parts.append(f"with {', '.join(customizations_added)}")
+    
+    response_parts.append(f"for ${total_price:.2f} total")
+    response_parts.append("What else would you like to order?")
+    
+    # Set state to taking order
+    set_state(OrderState.TAKING_ORDER)
+    current_item_customizing = None
+    
+    return " ".join(response_parts)
+
+@function_tool
+async def select_size_for_item(item_id: int, size_name: str) -> str:
+    """Select size for an item that has multiple size options"""
+    global current_item_customizing, current_state, current_size_selection
+    
+    if not user_cart:
+        return "I don't see any items in your cart to customize. Would you like to add something first?"
+    
+    # Find the item in cart
+    target_item = None
+    for item in reversed(user_cart):
+        if not item:
+            continue
+        if int(item.get("itemId", 0)) == int(item_id):
+            target_item = item
+            break
+    
+    if not target_item:
+        return "I don't see that item in your cart. Would you like to add something first?"
+    
+    # Get the menu item to validate size
+    item_dict = get_menu_item_by_id(int(item_id))
+    if not item_dict or not item_dict.get("sizes"):
+        return "This item doesn't have size options."
+    
+    # Find the selected size
+    selected_size = None
+    for size in item_dict["sizes"]:
+        if size.get("name", "").lower() == size_name.lower():
+            selected_size = size
+            break
+    
+    if not selected_size:
+        available_sizes = [size.get("name", "") for size in item_dict["sizes"]]
+        return f"Sorry, '{size_name}' is not available for this item. Available sizes are: {', '.join(available_sizes)}"
+    
+    # Update the item with the selected size
+    target_item["itemPrice"] = selected_size.get("price", 0)
+    target_item["selectedSize"] = selected_size.get("name", "")
+    
+    # Clear size selection state
+    current_size_selection = None
+    current_item_customizing = None
+    set_state(OrderState.TAKING_ORDER)
+    
+    return f"Perfect! I've set the size to {selected_size.get('name', '')} for your {target_item.get('itemName', 'item')}. The price is now ${selected_size.get('price', 0):.2f}. Is there anything else you'd like to order?"
+
+@function_tool
+async def add_sauce_to_wings(sauce_name: str) -> str:
+    """DEDICATED FUNCTION: Add sauce specifically to wings - bulletproof version"""
+    global user_cart, current_state
+    
+    try:
+        # Find wings in cart (item ID 1)
+        wings_item = None
+        for item in user_cart:
+            if item and item.get('itemId') == 1:  # Wings have ID 1
+                wings_item = item
+                break
         
-        # Check if there are other items in cart that need customizations
-        items_needing_customization = check_items_need_customization()
-        if items_needing_customization:
-            set_state(OrderState.COLLECTING_ITEMS)
-            return f"Added item: {cart_item['itemName']} (price: ${cart_item['itemPrice']:.2f}, quantity: {quantity}). I'll help you customize your other items. What else would you like to add?"
-        else:
-            set_state(OrderState.TAKING_ORDER)
-            return f"Added item: {cart_item['itemName']} (price: ${cart_item['itemPrice']:.2f}, quantity: {quantity}). Anything else for your order?"
+        if not wings_item:
+            return "I don't see any wings in your cart to add sauce to. Please add wings first."
+        
+        # Normalize sauce name
+        sauce_name = sauce_name.strip().lower()
+        sauce_mappings = {
+            'mild': 'Mild',
+            'buffalo': 'Buffalo', 
+            'bbq': 'BBQ',
+            'garlic parm': 'Garlic Parm',
+            'garlic parmesan': 'Garlic Parm',
+            'honey mustard': 'Honey Mustard',
+            'hot': 'Hot',
+            'ranch': 'Ranch',
+            'blue cheese': 'Blue Cheese'
+        }
+        
+        # Get the proper sauce name
+        proper_sauce_name = sauce_mappings.get(sauce_name, sauce_name.title())
+        
+        # Remove any existing sauce from wings
+        if 'customizations' not in wings_item:
+            wings_item['customizations'] = []
+        
+        # Remove old sauce
+        wings_item['customizations'] = [
+            c for c in wings_item['customizations'] 
+            if c and c.get('subItemGroupName') != 'Sauce'
+        ]
+        
+        # Add new sauce
+        sauce_customization = {
+            "optionId": f"sauce_{sauce_name.replace(' ', '_')}",
+            "subItemName": proper_sauce_name,
+            "subItemGroupName": "Sauce",
+            "price": 0.0,
+            "quantity": 1
+        }
+        
+        wings_item['customizations'].append(sauce_customization)
+        
+        # Update conversation context
+        update_conversation_context(customization_asked="wings")
+        
+        return f"Perfect! I've added {proper_sauce_name} sauce to your wings. Is there anything else you'd like to order?"
+        
+    except Exception as e:
+        logger.error(f"Error adding sauce to wings: {str(e)}")
+        return f"Sorry, I had trouble adding the sauce. Let me try again - what sauce would you like for your wings?"
 
 @function_tool
 async def add_sauce(item_id: int, sauce_name: str) -> str:
@@ -533,59 +1102,77 @@ async def add_sauce(item_id: int, sauce_name: str) -> str:
     try:
         # Normalize the sauce name to handle variations
         normalized_sauce = normalize_sauce_name(sauce_name)
-        print(f"\n=== ADD_SAUCE DEBUG START ===")
-        print(f"Input: item_id={item_id}, sauce_name='{sauce_name}' -> normalized: '{normalized_sauce}'")
-        print(f"Current cart: {[item['itemName'] for item in user_cart]}")
-        print(f"Current state: {current_state}")
         
         if not user_cart:
-            print("ERROR: No items in cart")
             return "I don't see any items in your cart to customize. Would you like to add something first?"
         
-        # Find the item in cart - if item_id doesn't match, find the most recent item
+        # First validate that the item exists in the menu
+        item_dict = get_menu_item_by_id(int(item_id))
+        if not item_dict:
+            return f"Sorry, I couldn't find that item in our menu. Please try adding a valid item first."
+        
+        # Check if the item actually has sauce customizations available
+        if not item_dict.get("customization", {}).get("Sauce"):
+            return f"Sorry, {item_dict.get('name', 'this item')} doesn't have sauce options available."
+        
+        # Find the item in cart - prioritize exact item_id match
         target_item = None
         if user_cart:
             # First try to find by exact item_id match
             for item in reversed(user_cart):
-                if not item:  # Skip None items
+                if not item or not isinstance(item, dict):  # Skip None items and non-dict items
                     continue
-                print(f"Checking cart item: {item.get('itemName', 'Unknown')} (ID: {item.get('itemId', 'Unknown')})")
                 if int(item.get("itemId", 0)) == int(item_id):
                     target_item = item
-                    print(f"Found target item by ID: {target_item.get('itemName', 'Unknown')}")
                     break
             
-            # If not found by ID, use the most recent item (last in cart)
+            # If not found by ID, look for items that need customization
+            if not target_item:
+                for item in reversed(user_cart):
+                    if not item or not isinstance(item, dict):  # Skip None items and non-dict items
+                        continue
+                    # Check if this item needs sauce customization
+                    item_dict = get_menu_item_by_id(int(item.get("itemId", 0)))
+                    if item_dict and item_dict.get("customization", {}).get("Sauce"):
+                        target_item = item
+                        item_id = item.get('itemId', 0)
+                        break
+            
+            # If still not found, use the most recent item (last in cart)
             if not target_item:
                 target_item = user_cart[-1] if user_cart else None  # Get the last (most recent) item
                 if not target_item:
-                    print(f"ERROR: No valid items in cart")
                     return f"I don't see any items in your cart to customize. Would you like to add something first?"
-                print(f"Using most recent cart item: {target_item.get('itemName', 'Unknown')} (ID: {target_item.get('itemId', 'Unknown')})")
                 # Update item_id to match the actual cart item
                 item_id = target_item.get('itemId', 0)
         
         if not target_item:
-            print(f"ERROR: No items in cart")
             return f"I don't see any items in your cart to customize. Would you like to add something first?"
         
         # Check if sauce is valid for this item
-        item_dict = find_menu_item_by_id(int(item_id))
-        print(f"Menu item found: {item_dict.get('name', 'Unknown') if item_dict else 'None'}")
-        
+        item_dict = get_menu_item_by_id(int(item_id))
         if item_dict and "customization" in item_dict and item_dict["customization"]:
             available_sauces = item_dict["customization"].get("Sauce", [])
-            print(f"Available sauces: {available_sauces}")
             
             if not available_sauces:
-                print(f"ERROR: Item {item_id} does not have sauce options")
                 return f"Sorry, this item doesn't have sauce options. This item has toppings instead. Would you like to add toppings instead?"
             
-            if normalized_sauce not in available_sauces:
-                print(f"ERROR: Sauce '{normalized_sauce}' not in available sauces: {available_sauces}")
-                return f"Sorry, '{normalized_sauce}' is not available for this item. Available sauces are: {', '.join(available_sauces)}"
+            # Extract sauce names for comparison and display
+            sauce_names = []
+            sauce_names_lower = []
+            for sauce in available_sauces:
+                if isinstance(sauce, dict):
+                    sauce_name = sauce.get('name', '')
+                    sauce_names.append(sauce_name)
+                    sauce_names_lower.append(sauce_name.lower())
+                else:
+                    sauce_name = str(sauce)
+                    sauce_names.append(sauce_name)
+                    sauce_names_lower.append(sauce_name.lower())
+            
+            if normalized_sauce not in sauce_names_lower:
+                return f"Sorry, '{sauce_name}' is not available for this item. Available sauces are: {', '.join(sauce_names)}"
         else:
-            print(f"ERROR: Item {item_id} has no customizations or item not found")
             return f"Sorry, this item doesn't have sauce options. This item has toppings instead. Would you like to add toppings instead?"
         
         # Remove any existing sauce (only one sauce allowed)
@@ -594,12 +1181,23 @@ async def add_sauce(item_id: int, sauce_name: str) -> str:
             c for c in target_item.get("customizations", []) 
             if c and c.get("subItemGroupName", "").lower() != "sauce"
         ]
-        print(f"Removed old sauces. Customizations before: {len(old_customizations)}, after: {len(target_item.get('customizations', []))}")
+        
+        # Find the original sauce name for proper display
+        original_sauce_name = sauce_name  # Use the original input
+        for sauce in available_sauces:
+            if isinstance(sauce, dict):
+                if sauce.get('name', '').lower() == normalized_sauce:
+                    original_sauce_name = sauce.get('name', sauce_name)
+                    break
+            else:
+                if str(sauce).lower() == normalized_sauce:
+                    original_sauce_name = str(sauce)
+                    break
         
         # Add the new sauce (sauce is included in base price, no additional charge)
         customization = {
             "optionId": f"sauce_{normalized_sauce.lower().replace(' ', '_')}",
-            "subItemName": normalized_sauce,
+            "subItemName": original_sauce_name,
             "subItemGroupName": "Sauce",
             "price": 0.0,  # Sauce is free - included in base price
             "quantity": 1
@@ -607,14 +1205,9 @@ async def add_sauce(item_id: int, sauce_name: str) -> str:
         if "customizations" not in target_item:
             target_item["customizations"] = []
         target_item["customizations"].append(customization)
-        print(f"Added sauce customization: {customization}")
-        
-        logger.info(f"Added sauce: {sauce_name} to item {item_id}")
-        print(f"Current customizations: {[c.get('subItemName', '') for c in target_item.get('customizations', []) if c]}")
         
         # Check if all customizations are complete
         if not item_dict or "customization" not in item_dict:
-            print("No customizations required, moving to TAKING_ORDER")
             current_item_customizing = None
             set_state(OrderState.TAKING_ORDER)
             return f"Perfect! I've added {normalized_sauce} sauce to your {target_item['itemName']}. Is there anything else you'd like to order?"
@@ -622,31 +1215,21 @@ async def add_sauce(item_id: int, sauce_name: str) -> str:
         # Check if all required customizations are done
         required_groups = list(item_dict.get("customization", {}).keys())
         completed_groups = set()
-        print(f"Required groups: {required_groups}")
         
         for group in required_groups:
             group_lower = group.lower()
-            print(f"Checking group: {group} (lower: {group_lower})")
             
             if group_lower == "sauce":
                 sauce_customs = [c for c in target_item.get("customizations", []) if c and c.get("subItemGroupName", "").lower() == "sauce"]
-                print(f"Sauce customs found: {len(sauce_customs)} - {[c.get('subItemName', '') for c in sauce_customs if c]}")
                 if len(sauce_customs) == 1:
                     completed_groups.add(group_lower)
-                    print(f"✓ Sauce group completed")
             elif group_lower == "toppings":
                 # Toppings are optional, so consider complete if we have any
                 topping_customs = [c for c in target_item.get("customizations", []) if c and c.get("subItemGroupName", "").lower() == "toppings"]
-                print(f"Topping customs found: {len(topping_customs)} - {[c.get('subItemName', '') for c in topping_customs if c]}")
                 if topping_customs:
                     completed_groups.add(group_lower)
-                    print(f"✓ Toppings group completed")
-        
-        print(f"Completed groups: {completed_groups}")
-        print(f"Required groups count: {len(required_groups)}")
         
         if len(completed_groups) == len(required_groups):
-            print("All customizations complete for this item")
             current_item_customizing = None
             
             # Check if there are other items that need customizations
@@ -666,14 +1249,8 @@ async def add_sauce(item_id: int, sauce_name: str) -> str:
                 return f"Perfect! I've added {normalized_sauce} sauce. Any other customizations for your {target_item['itemName']}?"
                 
     except Exception as e:
-        print(f"ERROR in add_sauce: {str(e)}")
-        print(f"Error type: {type(e).__name__}")
-        import traceback
-        print(f"Traceback: {traceback.format_exc()}")
         logger.error(f"Error adding sauce {sauce_name} to item {item_id}: {str(e)}")
         return f"I'm sorry, I encountered an error adding the sauce. Let me help you try again. What sauce would you like?"
-    finally:
-        print(f"=== ADD_SAUCE DEBUG END ===\n")
 
 @function_tool
 async def add_topping(item_id: int, topping_name: str, quantity: int = 1) -> str:
@@ -682,18 +1259,39 @@ async def add_topping(item_id: int, topping_name: str, quantity: int = 1) -> str
     if not user_cart:
         return "I don't see any items in your cart to customize. Would you like to add something first?"
     
-    # Find the item in cart - if item_id doesn't match, find the most recent item
+    # First validate that the item exists in the menu
+    item_dict = get_menu_item_by_id(int(item_id))
+    if not item_dict:
+        return f"Sorry, I couldn't find that item in our menu. Please try adding a valid item first."
+    
+    # Check if the item actually has topping customizations available
+    if not item_dict.get("customization", {}).get("Toppings"):
+        return f"Sorry, {item_dict.get('name', 'this item')} doesn't have topping options available."
+    
+    # Find the item in cart - prioritize exact item_id match
     target_item = None
     if user_cart:
         # First try to find by exact item_id match
         for item in reversed(user_cart):
-            if not item:  # Skip None items
+            if not item or not isinstance(item, dict):  # Skip None items and non-dict items
                 continue
             if int(item.get("itemId", 0)) == int(item_id):
                 target_item = item
                 break
         
-        # If not found by ID, use the most recent item (last in cart)
+        # If not found by ID, look for items that need customization
+        if not target_item:
+            for item in reversed(user_cart):
+                if not item or not isinstance(item, dict):  # Skip None items and non-dict items
+                    continue
+                # Check if this item needs topping customization
+                item_dict = get_menu_item_by_id(int(item.get("itemId", 0)))
+                if item_dict and item_dict.get("customization", {}).get("Toppings"):
+                    target_item = item
+                    item_id = item.get('itemId', 0)
+                    break
+        
+        # If still not found, use the most recent item (last in cart)
         if not target_item:
             target_item = user_cart[-1] if user_cart else None  # Get the last (most recent) item
             if not target_item:
@@ -705,7 +1303,7 @@ async def add_topping(item_id: int, topping_name: str, quantity: int = 1) -> str
         return f"I don't see any items in your cart to customize. Would you like to add something first?"
     
     # Get the correct price from menu for toppings
-    item_dict = find_menu_item_by_id(int(item_id))
+    item_dict = get_menu_item_by_id(int(item_id))
     custom_price = 0.0
     
     if item_dict and "customization" in item_dict and item_dict["customization"]:
@@ -713,14 +1311,36 @@ async def add_topping(item_id: int, topping_name: str, quantity: int = 1) -> str
         for option in topping_options:
             if not option:  # Skip None options
                 continue
-            if isinstance(option, dict) and option.get("name") == topping_name:
+            if isinstance(option, dict) and option.get("name", "").lower() == topping_name.lower():
                 custom_price = option.get("price", 0.0)
                 break
     
-    # Add the topping
+    # Check if topping already exists
+    existing_toppings = [c for c in target_item.get("customizations", []) 
+                        if c and c.get("subItemGroupName", "").lower() == "toppings" 
+                        and c.get("subItemName", "").lower() == topping_name.lower()]
+    
+    if existing_toppings:
+        # Update quantity of existing topping
+        existing_toppings[0]["quantity"] = existing_toppings[0].get("quantity", 1) + quantity
+        logger.info(f"Updated quantity for existing topping: {topping_name}")
+        return f"Updated quantity for {topping_name} topping. Current quantity: {existing_toppings[0]['quantity']}"
+    
+    # Find the original topping name for proper display
+    original_topping_name = topping_name  # Use the original input
+    if item_dict and "customization" in item_dict and item_dict["customization"]:
+        topping_options = item_dict["customization"].get("Toppings", [])
+        for option in topping_options:
+            if not option:  # Skip None options
+                continue
+            if isinstance(option, dict) and option.get("name", "").lower() == topping_name.lower():
+                original_topping_name = option.get("name", topping_name)
+                break
+    
+    # Add the new topping
     customization = {
         "optionId": f"topping_{topping_name.lower().replace(' ', '_')}",
-        "subItemName": topping_name,
+        "subItemName": original_topping_name,
         "subItemGroupName": "Toppings",
         "price": custom_price,
         "quantity": quantity
@@ -838,9 +1458,79 @@ async def get_recommendations() -> str:
     return get_popular_items()
 
 @function_tool
+async def get_complete_menu_list() -> str:
+    """Get complete list of all menu items with just names and IDs"""
+    if not hasattr(current_session, 'menu_data') or not current_session.menu_data:
+        return "I'm sorry, I'm having trouble loading our menu right now. Please try again in a moment."
+    
+    # Build complete menu context
+    menu_context = []
+    for item in current_session.menu_data:
+        if not item or not item.get('id') or not item.get('name'):
+            continue
+        short_name = item.get('short_name')
+        name = clean_item_name(short_name or item.get('name', '') or '')
+        if name:
+            menu_context.append({
+                "id": item.get('id'),
+                "name": name
+            })
+    
+    if not menu_context:
+        return "I don't have any menu items available right now."
+    
+    # Format as a readable list
+    result = f"Here's our complete menu with {len(menu_context)} items:\n\n"
+    for item in menu_context:
+        result += f"• {item['name']} (ID: {item['id']})\n"
+    
+    return result
+
+@function_tool
 async def get_full_menu() -> str:
-    """Get the complete menu organized by categories with pricing"""
-    if not MENU:
+    """Get menu categories only - for general menu requests"""
+    if not hasattr(current_session, 'menu_data') or not current_session.menu_data:
+        return "I'm sorry, I'm having trouble loading our menu right now. Please try again in a moment."
+    
+    # Collect unique categories from menu data
+    categories = set()
+    for item in current_session.menu_data:
+        if not item:  # Skip None items
+            continue
+        category = item.get('category', 'Other')
+        if category:
+            categories.add(category)
+    
+    # Build item types list (convert categories to user-friendly terms)
+    item_types = {
+        'Popular': 'Popular Items',
+        'Appetizers & Sides': 'Appetizers & Sides',
+        'Salads': 'Salads',
+        'Soup': 'Soups',
+        'Toasted Sandwiches': 'Sandwiches',
+        'Burgers': 'Burgers',
+        'Stromboli': 'Stromboli',
+        'Rolls': 'Rolls',
+        'Build Your Own Pizza': 'Build Your Own Pizza',
+        'Gourmet Pizza': 'Gourmet Pizza',
+        'Pasta Dinners': 'Pasta',
+        'Beverages': 'Drinks'
+    }
+    
+    result = "Here's what we have:\n\n"
+    for category in sorted(categories):
+        display_name = item_types.get(category, category)
+        result += f"• {display_name}\n"
+    
+    result += "\nWould you like to see items from a specific type or hear about our popular items?"
+    
+    print(f"📋 Menu categories shown: {len(categories)} categories")
+    return result
+
+@function_tool
+async def get_detailed_menu() -> str:
+    """Get the complete menu with all items - for detailed requests"""
+    if not hasattr(current_session, 'menu_data') or not current_session.menu_data:
         return "I'm sorry, I'm having trouble loading our menu right now. Please try again in a moment."
     
     # Classify items by categories
@@ -850,36 +1540,37 @@ async def get_full_menu() -> str:
     drinks = []
     other = []
     
-    # Collect all items from all categories - ONLY from the loaded API menu
-    for category, items in MENU.items():
-        if not items:  # Skip empty categories
+    # Collect all items from the session's menu data
+    for item in current_session.menu_data:
+        if not item:  # Skip None items
             continue
-        for item in items:
-            if not item:  # Skip None items
-                continue
-            short_name = item.get('short_name')
-            name = clean_item_name(short_name or item.get('name', '') or '')
-            
-            # Skip items with empty names
-            if not name:
-                continue
-            
-            # Show only name and ID, no prices
-            item_id = item.get('id', 'N/A')
-            item_info = f"• {name} (ID: {item_id})"
-            name_lower = name.lower()
-            
-            # Classify by item type
-            if "pizza" in name_lower:
-                pizzas.append(item_info)
-            elif "wing" in name_lower:
-                wings.append(item_info)
-            elif any(word in name_lower for word in ["bread", "fries", "knots", "salad", "garlic"]):
-                sides.append(item_info)
-            elif any(word in name_lower for word in ["coke", "pepsi", "sprite", "water", "drink"]):
-                drinks.append(item_info)
-            else:
-                other.append(item_info)
+        short_name = item.get('short_name')
+        name = clean_item_name(short_name or item.get('name', '') or '')
+        
+        # Skip items with empty names
+        if not name:
+            continue
+        
+        # Show only name and ID, no prices
+        item_id = item.get('id', 'N/A')
+        item_info = f"• {name} (ID: {item_id})"
+        name_lower = name.lower()
+        
+        # Classify by item type using both category field and name keywords
+        item_category = item.get('category', '').lower()
+        
+        if "pizza" in name_lower or "pizza" in item_category:
+            pizzas.append(item_info)
+        elif "wing" in name_lower or "wing" in item_category:
+            wings.append(item_info)
+        elif (any(word in name_lower for word in ["bread", "fries", "knots", "salad", "garlic"]) or 
+              "side" in item_category or "appetizer" in item_category):
+            sides.append(item_info)
+        elif (any(word in name_lower for word in ["coke", "pepsi", "sprite", "water", "drink"]) or 
+              "beverage" in item_category):
+            drinks.append(item_info)
+        else:
+            other.append(item_info)
     
     # Build categorized menu
     result = "Here's our complete menu organized by categories:\n\n"
@@ -914,43 +1605,56 @@ async def get_full_menu() -> str:
             result += f"{item}\n"
     
     total_items = len(pizzas) + len(wings) + len(sides) + len(drinks) + len(other)
-    print(f"🍕 Full menu generated with {total_items} items from API")
+    print(f"🍕 Detailed menu generated with {total_items} items from API")
     return result
 
 @function_tool
 async def get_category_menu(category: str) -> str:
     """Get menu items for a specific category (pizza, wings, sides, drinks, other)"""
-    if not MENU:
+    if not hasattr(current_session, 'menu_data') or not current_session.menu_data:
         return "I'm sorry, I'm having trouble loading our menu right now. Please try again in a moment."
     
     category_lower = category.lower()
     items = []
     
-    # Collect items from the specified category
-    for cat, items_list in MENU.items():
-        if not items_list:  # Skip empty categories
+    # Collect items from the session's menu data
+    for item in current_session.menu_data:
+        if not item:  # Skip None items
             continue
-        for item in items_list:
-            if not item:  # Skip None items
-                continue
-            short_name = item.get('short_name')
-            name = clean_item_name(short_name or item.get('name', '') or '')
-            
-            # Skip items with empty names
-            if not name:
-                continue
-            
-            name_lower = name.lower()
-            
-            # Check if item matches the requested category
-            if category_lower == "pizza" and "pizza" in name_lower:
-                items.append(item)
-            elif category_lower == "wings" and "wing" in name_lower:
-                items.append(item)
-            elif category_lower == "sides" and any(word in name_lower for word in ["bread", "fries", "knots", "salad", "garlic"]):
-                items.append(item)
-            elif category_lower == "drinks" and any(word in name_lower for word in ["coke", "pepsi", "sprite", "water", "drink"]):
-                items.append(item)
+        short_name = item.get('short_name')
+        name = clean_item_name(short_name or item.get('name', '') or '')
+        
+        # Skip items with empty names
+        if not name:
+            continue
+        
+        name_lower = name.lower()
+        
+        # Check if item matches the requested category using both category field and name keywords
+        item_category = item.get('category', '').lower()
+        
+        if category_lower == "pizza" and ("pizza" in name_lower or "pizza" in item_category):
+            items.append(item)
+        elif category_lower == "wings" and ("wing" in name_lower or "wing" in item_category):
+            items.append(item)
+        elif category_lower == "sides" and (any(word in name_lower for word in ["bread", "fries", "knots", "salad", "garlic"]) or "side" in item_category or "appetizer" in item_category):
+            items.append(item)
+        elif category_lower == "drinks" and (any(word in name_lower for word in ["coke", "pepsi", "sprite", "water", "drink"]) or "beverage" in item_category):
+            items.append(item)
+        elif category_lower == "salads" and ("salad" in name_lower or "salad" in item_category):
+            items.append(item)
+        elif category_lower == "soup" and ("soup" in name_lower or "soup" in item_category):
+            items.append(item)
+        elif category_lower == "burgers" and ("burger" in name_lower or "burger" in item_category):
+            items.append(item)
+        elif category_lower == "sandwiches" and ("sandwich" in name_lower or "sandwich" in item_category):
+            items.append(item)
+        elif category_lower == "stromboli" and ("stromboli" in name_lower or "stromboli" in item_category):
+            items.append(item)
+        elif category_lower == "rolls" and ("roll" in name_lower or "roll" in item_category):
+            items.append(item)
+        elif category_lower == "pasta" and ("pasta" in name_lower or "pasta" in item_category):
+            items.append(item)
     
     if not items:
         return f"I don't have any {category} items available right now. Would you like to see our full menu instead?"
@@ -995,7 +1699,7 @@ def check_items_need_customization():
             continue
         
         item_id = item.get('itemId')
-        menu_item = find_menu_item_by_id(item_id)
+        menu_item = get_menu_item_by_id(item_id)
         
         if menu_item and menu_item.get('customization'):
             # Check if this item has customizations that haven't been completed
@@ -1108,7 +1812,7 @@ async def process_all_customizations() -> str:
 @function_tool
 async def get_item_details(item_id: int) -> str:
     """Get detailed information about a specific item including pricing and customizations"""
-    item = find_menu_item_by_id(item_id)
+    item = get_menu_item_by_id(item_id)
     if not item:
         return f"I couldn't find an item with ID {item_id}. Could you please check the menu again?"
     
@@ -1218,7 +1922,7 @@ async def show_pricing_info() -> str:
 @function_tool
 async def get_sauce_options(item_id: int) -> str:
     """Get available sauce options for a specific item"""
-    item = find_menu_item_by_id(item_id)
+    item = get_menu_item_by_id(item_id)
     if not item or "customization" not in item or not item["customization"]:
         return "This item doesn't have sauce options."
     
@@ -1471,29 +2175,90 @@ Accuracy is Paramount: The primary goal is a 100% accurate order. Every other di
 Single, Gentle Upsell: You are permitted to suggest one additional item (like drinks, sides, or dessert) after the main order is complete. If the customer declines, you MUST proceed to confirmation without a second attempt.
 Stay on Task: Do not engage in conversations outside of the ordering process. If a customer asks an unrelated question, politely steer the conversation back to the order.
 
+[CRITICAL: IMMEDIATE ITEM VALIDATION]
+You MUST validate every item mentioned by the customer IMMEDIATELY when they mention it, not at checkout.
+
+VALIDATION RULES:
+- When a customer mentions ANY item, immediately call check_item_availability(item_name) to verify it exists
+- If the item does NOT exist, immediately tell the customer: "Sorry, '[item_name]' is not available on our menu. [suggest popular items]. What would you like to order instead?"
+- NEVER say "yes" or confirm an item without first validating it exists in the menu
+- NEVER take a customer to checkout with non-existent items
+- If you're unsure about an item name, ask for clarification: "I want to make sure I have the right item - did you mean [suggested item]?"
+
+EXAMPLES:
+- Customer: "I want a pepperoni pizza" → You: Call check_item_availability("pepperoni pizza") first
+- Customer: "I want a chocolate pizza" → You: "Sorry, 'chocolate pizza' is not available on our menu. Some popular items we have are: Wings, 12 Inch Pizza, Personal Pizza. What would you like to order instead?"
+- Customer: "I want a margherita pizza" → You: Call check_item_availability("margherita pizza") first
+
+NEVER proceed with ordering until you've confirmed the item exists in the menu.
+
+[CONVERSATION CONTEXT & PREVENTING REPETITIVE QUESTIONS]
+You MUST maintain conversation context to avoid asking the same questions repeatedly:
+
+CONTEXT RULES:
+- Track what items the customer has mentioned and what questions you've already asked
+- If you've already asked about size for an item, don't ask again - use select_size() when they respond
+- If you've already asked about customizations, don't ask again - use add_sauce() or add_topping() when they respond
+- If an item is already in the cart, don't ask if they want to add it again
+- Always acknowledge what the customer has already told you before asking new questions
+
+EXAMPLES:
+- Customer: "I want wings" → You: "Great! Wings are available. What size would you like? 10 Count or 24 Count?"
+- Customer: "10 count" → You: Call select_size("wings", "10 count") - don't ask about size again
+- Customer: "BBQ sauce" → You: Call add_sauce() - don't ask about sauce again
+
+NEVER ask the same question twice in a conversation.
+
 [CONVERSATIONAL FLOW & TASK EXECUTION]
 1. Greeting & Opening:
 * Objective: Welcome the customer warmly and establish your role.
 * Phrasing: "Thank you for calling Jimmy Neno's Pizza! This is Tony. What can I get started for you today?"
 
 2. Taking the Main Order:
-* Objective: Accurately capture all desired menu items.
+* Objective: Accurately capture all desired menu items with all customizations in one step.
 * Process:
-* Listen for items. If a customer says, "I'll have a pepperoni pizza," immediately clarify, "Great choice! What size would you like for that pepperoni pizza?"
+* CRITICAL: When a customer mentions ANY item, IMMEDIATELY call check_item_availability(item_name) to validate it exists before proceeding
+* If a customer says, "I'll have a pepperoni pizza," FIRST call check_item_availability("pepperoni pizza") to confirm it exists
+* If the customer responds with a size (e.g., "large", "12 inch", "personal"), IMMEDIATELY call select_size(item_name, size_name) to add the item with the selected size
 * If the customer is unsure ("What's good here?"), offer a popular suggestion: "Our most popular pizza is the 'Neno's Supreme,' or you can't go wrong with a classic Pepperoni. What are you in the mood for?"
-* When they specify toppings for pizza items (e.g., "pepperoni", "extra cheese"), immediately call add_topping() with those toppings and continue the conversation
-* When they specify sauce for wings items (e.g., "BBQ sauce", "Buffalo", "Honey Mustard", "Garlic Parm", "Mild"), immediately call add_sauce() with that sauce and continue the conversation
-* IMPORTANT: Only ask for sauce for wings items, only ask for toppings for pizza items
-* If you didn't hear their topping choice clearly, immediately ask for clarification while providing options: "I want to make sure I get this right - what toppings did you want? We have Pepperoni, Sausage, Mushrooms, Extra Cheese, or Green Peppers available."
-* If you didn't hear their sauce choice clearly for wings, immediately ask for clarification while providing options: "I want to make sure I get this right - what sauce did you want? We have Buffalo, BBQ, Garlic Parm, Honey Mustard, or Mild available."
+* CRITICAL: When customers specify multiple customizations in one sentence (e.g., "Buffalo chicken pizza with extra cheese and BBQ sauce, large size"), process ALL customizations immediately using lookup_add_item_to_cart() - do NOT ask separately for toppings, sauces, or size.
+* Process all user-specified customizations (size, toppings, sauces) in one step, accurately reflecting the complete order in the summary and confirmation.
+* Only ask for missing information if absolutely necessary - avoid any unnecessary latency between user input and AI response.
+* CUSTOMIZATION MANDATE: Only ask for customizations that are ACTUALLY available in the menu for each specific item.
+* CRITICAL CUSTOMIZATION RULES:
+  - ONLY ask for customizations that are ACTUALLY available for each item
+  - Wings items: ONLY ask for sauce (Buffalo, BBQ, Garlic Parm, etc.) - NEVER ask for toppings
+  - Regular pizzas (12 Inch, Personal): ONLY ask for toppings - they have NO sauce options
+  - Gourmet pizzas (Garden, Buffalo Chicken, etc.): NO customizations available - don't ask for any
+  - Build Your Own pizzas: ONLY ask for toppings - they have NO sauce options
+  - If item has NO customizations (like Garden Pizza), don't ask for any
+  - Check the actual menu data before asking for customizations
+  - MANDATORY: Only ask for customizations that exist in the menu
+  - OPTIONAL: Toppings are optional but must be asked about if available - user can say "no toppings"
+* CUSTOMIZATION REQUIREMENTS:
+  - ONLY ask for customizations that are ACTUALLY available for each specific item
+  - If user doesn't mention customizations in the same line, ask only for what's available
+  - Toppings are OPTIONAL but must be asked about if available - user can say "no toppings"
+  - Sauce selection is MANDATORY only if sauce options are available
+  - Example: Wings → "What sauce would you like?" (Buffalo, BBQ, etc.)
+  - Example: Regular Pizza → "What toppings would you like?" (Pepperoni, Mushrooms, etc.)
+  - Example: Garden Pizza → No customizations needed (none available)
+* If you didn't hear their topping choice clearly, immediately ask for clarification while providing options: "I didn't hear that properly, could you please repeat? We have Pepperoni, Sausage, Mushrooms, Extra Cheese, or Green Peppers available."
+* If you didn't hear their sauce choice clearly, immediately ask for clarification while providing options: "I didn't hear that properly, could you please repeat? We have Buffalo, BBQ, Garlic Parm, Honey Mustard, or Mild available."
+* CRITICAL: When customer responds with ANY sauce name for WINGS, IMMEDIATELY call add_sauce_to_wings() with the sauce name
+* Example: Customer says "Mild" for wings → You: Call add_sauce_to_wings("Mild") immediately
+* Example: Customer says "BBQ sauce" for wings → You: Call add_sauce_to_wings("BBQ") immediately
+* For other items with sauce, use add_sauce() with item ID
+* CRITICAL: Always use "I didn't hear that properly, could you please repeat?" for unclear audio - this phrase works well across all English accents and dialects.
 
 3. Gentle Upsell:
 * Objective: Suggest one relevant item to enhance the meal.
 * Timing: After they've finished listing their main items.
 * Phrasing: "Got it. And would you like to add any drinks or maybe our popular garlic knots to your order today?"
 * Response: If they say no, immediately move on with a positive affirmation like, "No problem at all."
-* If they specify a drink, immediately call lookup_add_item_to_cart() with that drink and continue the conversation
-* If you didn't hear their drink choice clearly, immediately ask for clarification while providing options: "I want to make sure I get this right - what drink did you want? We have Coke, Pepsi, Sprite, or bottled water available."
+* CRITICAL: If they specify a drink or any item, FIRST call check_item_availability(item_name) to validate it exists before proceeding
+* If they specify a drink, FIRST call check_item_availability(drink_name), then if it exists, call lookup_add_item_to_cart() with that drink
+* If you didn't hear their drink choice clearly, immediately ask for clarification while providing options: "I didn't hear that properly, could you please repeat? We have Coke, Pepsi, Sprite, or bottled water available."
 * NEVER sit idle after asking about drinks - always maintain conversation flow
 
 4. Order Confirmation:
@@ -1505,10 +2270,13 @@ Stay on Task: Do not engage in conversations outside of the ordering process. If
 * Objective: Gather the customer's name for the order.
 * Process: Once the order is confirmed, ask for their name. The phone number is captured automatically, so DO NOT ask for it.
 * Phrasing: "Perfect. What's the name for the order?"
-* IMPORTANT: When they tell you their name (even if it's just one word like "John", "Sarah", "Mike"), IMMEDIATELY call finalize_order() with that name - do NOT ask again or call any other functions
+* IMPORTANT: When they tell you their name in ANY format, IMMEDIATELY call finalize_order() with that name - do NOT ask again or call any other functions
+* Accept ANY name format: "John", "My name is Sarah", "It's Mike", "This is Jennifer", "I'm David", etc.
+* Extract just the name from their response and call finalize_order() immediately
 * Example: Customer says "John" → You say "Got it, John!" and immediately call finalize_order("John")
 * Example: Customer says "My name is Sarah" → You say "Got it, Sarah!" and immediately call finalize_order("Sarah")
 * Example: Customer says "It's Mike" → You say "Got it, Mike!" and immediately call finalize_order("Mike")
+* Example: Customer says "This is Jennifer" → You say "Got it, Jennifer!" and immediately call finalize_order("Jennifer")
 
 6. Closing the Call:
 * Objective: End the call on a high note, providing essential information.
@@ -1517,8 +2285,15 @@ Stay on Task: Do not engage in conversations outside of the ordering process. If
 * IMPORTANT: When saying goodbye, call say_goodbye_and_end_call() - do NOT call any other functions
 
 [ERROR HANDLING & CONTINGENCIES]
-Unclear Audio/Mumbling: If you can't understand something, ask for clarification politely while keeping the conversation flowing.
-Example: "I'm sorry, I didn't quite catch that last topping. Could you say that one more time for me?"
+Accent & Pronunciation Handling: The agent must accurately understand users regardless of their English accent, dialect, or regional pronunciation. Use advanced speech recognition and natural language understanding that works across all English-speaking regions worldwide.
+
+Unclear Audio/Accent Ambiguity: If you can't confidently understand something due to accent, pronunciation, or unclear audio, ask for clarification politely while keeping the conversation flowing. NEVER assume or process a wrong order due to accent ambiguity.
+Examples: 
+- "I didn't hear that properly, could you please repeat?"
+- "I want to make sure I get this right - could you say that one more time for me?"
+- "I didn't quite catch that, could you please repeat that for me?"
+- "Let me make sure I have this correct - could you repeat that last part?"
+
 Customizations/Special Requests: Handle these with positive affirmations.
 Customer: "Can I get the veggie pizza but with no onions?"
 Tony: "Absolutely. A veggie pizza with no onions. We can definitely do that for you."
@@ -1529,16 +2304,42 @@ Off-Topic Questions: If asked something you can't answer (e.g., "How late are yo
 [CRITICAL: NO IDLE SILENCE - KEEP TALKING ALWAYS]
 - NEVER sit in silence or pause without talking - always maintain conversation flow
 - If you didn't hear something clearly, immediately ask for clarification while keeping energy up
-- Examples of what to say when you didn't hear properly:
-  * "I'm sorry, I didn't quite catch that sauce choice. Could you repeat that for me? We have BBQ, Marinara, or Buffalo sauce available."
+- Examples of what to say when you didn't hear properly (accent-friendly):
+  * "I didn't hear that properly, could you please repeat? We have BBQ, Marinara, or Buffalo sauce available."
   * "I want to make sure I get this right - what toppings did you want on your pizza? I have several options here."
-  * "Let me ask that again - what toppings would you like? I want to make sure I add the right ones to your order."
-  * "I didn't quite catch that drink choice. What drink would you like? We have Coke, Pepsi, Sprite, or bottled water."
+  * "Let me make sure I have this correct - what toppings would you like? I want to make sure I add the right ones to your order."
+  * "I didn't quite catch that, could you please repeat that for me? We have Coke, Pepsi, Sprite, or bottled water."
   * "I want to make sure I get your drink order right - what did you say? I have several drink options available."
   * "Let me ask about drinks again - what would you like to drink with your meal? I want to make sure I add the right one."
 - If you're unsure about any customization, ask again while being engaging and helpful
 - Always provide context when asking again - mention what options are available
 - Keep the conversation flowing even during clarification requests
+
+[ACCENT & SPEECH RECOGNITION HANDLING]
+The agent uses advanced speech recognition and natural language understanding models that are trained or fine-tuned for a broad diversity of English accents worldwide. The agent must accurately understand users regardless of their English accent, dialect, or regional pronunciation. This includes:
+- American English (all regions: Southern, Northern, Midwestern, Western, etc.)
+- British English (all regions: Received Pronunciation, Cockney, Scottish, Welsh, Irish, etc.)
+- Canadian English
+- Australian English
+- New Zealand English
+- South African English
+- Indian English
+- Caribbean English
+- And all other English-speaking regions worldwide
+
+Key Principles:
+1. NEVER assume or process a wrong order due to accent ambiguity
+2. Always clarify courteously if unsure about any detail
+3. Use the standard clarification phrase: "I didn't hear that properly, could you please repeat?"
+4. Provide context when asking for clarification (mention available options)
+5. Maintain a warm, patient tone when asking for repetition
+6. If still unclear after repetition, ask them to spell it out or use different words
+
+Examples of accent-friendly responses:
+- "I didn't hear that properly, could you please repeat?"
+- "I want to make sure I get this right - could you say that one more time for me?"
+- "Let me make sure I have this correct - what did you say?"
+- "I didn't quite catch that, could you please repeat that for me?"
 
 [BOUNDARIES & CONSTRAINTS]
 DO NOT ask for payment information. This is handled at pickup.
@@ -1576,12 +2377,16 @@ Keep the conversation flowing and engaging:
 [CRITICAL: RESPONSE PROCESSING - NO REPEAT QUESTIONS]
 - When a customer answers your question, PROCESS their answer immediately - do NOT ask the same question again
 - If they tell you their name, immediately call finalize_order() with that name
-- If they tell you their sauce preference (even if it's just the sauce name like "BBQ", "Buffalo", "Honey Mustard"), immediately call add_sauce() with that sauce
+- If they tell you their sauce preference (even if it's just the sauce name like "BBQ", "Buffalo", "Honey Mustard", "Mild"), immediately call add_sauce() with that sauce
+- CRITICAL: When user says any sauce name for WINGS (Buffalo, BBQ, Mild, Hot, Ranch, Blue Cheese, Garlic Parm, Honey Mustard), IMMEDIATELY call add_sauce_to_wings(sauce_name)
+- For other items with sauce, use add_sauce(get_current_item_id(), sauce_name)
 - If they tell you their topping preference, immediately call add_topping() with that topping
 - If they tell you their drink preference, immediately call lookup_add_item_to_cart() with that drink
 - NEVER ask "What's your name?" twice - if they already told you, use it
 - NEVER ask "What toppings would you like?" twice - if they already told you, use it
 - NEVER ask "What drink would you like?" twice - if they already told you, use it
+- NEVER re-ask for size, toppings, or sauces that the customer already specified in their initial request
+- If customer says "Buffalo chicken pizza with extra cheese and large size", process ALL those details immediately
 - Always acknowledge their answer: "Got it, [name]!" or "Perfect, I'll add [toppings] to your pizza!" or "Great choice on the [drink]!"
 
 No Over-offering:
@@ -1612,7 +2417,7 @@ NOTE:
             catalog_text + "\n\n"
             "Role: You are Tony, a professional AI Voice Assistant for Jimmy Neno's Pizza restaurant. "
             "You are warm, efficient, and always initiate conversations professionally. "
-            "When customers ask for the menu, ALWAYS use get_full_menu() to show ALL items organized by categories (pizzas, wings, sides, drinks, other) with names and IDs only (NO PRICES). Never show only popular items - always show the complete menu. "
+            "When customers ask for the menu or 'what do you have', use get_full_menu() to show ONLY the menu categories, not individual items. For detailed menu requests, use get_detailed_menu() to show all items with names and IDs. "
             "When customers ask for specific categories (like 'pizza only' or 'wings only'), use get_category_menu() to show only that category with available customizations. "
             "When customers ask about pricing for a specific item, use get_item_details() with the item ID to show pricing and customizations. "
             "When customers ask about pricing during ordering, use show_pricing_info() to show their current order with detailed pricing. "
@@ -1670,6 +2475,7 @@ class CustomAgentSession(AgentSession):
         self.session_id = f"session_{id(self)}"
         self.start_time = asyncio.get_event_loop().time()
         self._last_activity = self.start_time
+        self.menu_data = []  # Store raw menu data for ID-based lookup
         logger.info(f"New session started: {self.session_id}")
     
     async def generate_reply(self, instructions: str = ""):
@@ -1677,24 +2483,26 @@ class CustomAgentSession(AgentSession):
             # Update last activity time
             self._last_activity = asyncio.get_event_loop().time()
             
-            # Use cached menu context for better performance
+            # Build menu context directly from session menu data (name and ID only)
             if not hasattr(self, '_cached_menu_context') or not self._cached_menu_context:
-                self._cached_menu_context = [{"id": entry["id"], "name": entry["name"]} for entry in ITEM_CATALOG if entry["id"] is not None]
+                if hasattr(self, 'menu_data') and self.menu_data:
+                    # Extract only name and ID from raw menu data - optimized
+                    self._cached_menu_context = [
+                        {"id": item.get('id'), "name": clean_item_name(item.get('short_name') or item.get('name', ''))}
+                        for item in self.menu_data
+                        if item and item.get('id') and item.get('name')
+                    ]
+                else:
+                    # Fallback to ITEM_CATALOG if session data not available
+                    self._cached_menu_context = [{"id": entry["id"], "name": entry["name"]} for entry in ITEM_CATALOG if entry["id"] is not None]
             
             menu_context = self._cached_menu_context
             
             # Simplified state for better performance
             prompt = instructions if instructions else self._agent.instructions
 
-            # Log session activity for monitoring (reduced frequency)
-            if len(user_cart) > 0 or current_state != OrderState.TAKING_ORDER:
-                logger.info(f"Session {self.session_id} - State: {current_state.value}, Cart items: {len(user_cart)}")
-
-            # Simplified prompt for better performance - only include essential context
-            if len(menu_context) > 10:  # Only include menu if it's not too large
-                enhanced_prompt = f"{prompt}\n\n[MENU CATALOG]\n{json.dumps(menu_context[:10])}"  # Limit to first 10 items
-            else:
-                enhanced_prompt = f"{prompt}\n\n[MENU CATALOG]\n{json.dumps(menu_context)}"
+            # Include complete menu context (all items with just name and ID)
+            enhanced_prompt = f"{prompt}\n\n[MENU CATALOG]\n{json.dumps(menu_context)}"
             
             return await super().generate_reply(instructions=enhanced_prompt)
         except Exception as e:
@@ -1719,6 +2527,27 @@ async def entrypoint(ctx: JobContext):
     try:
         # Load menu from API first
         await load_menu()
+        
+        # Fetch raw menu data for session
+        raw_menu_data = await fetch_raw_menu_from_api()
+        if raw_menu_data and 'menu' in raw_menu_data:
+            session_menu_data = raw_menu_data['menu']
+            print(f"📊 Fetched {len(session_menu_data)} items from Supabase API")
+            
+            # Verify all items have required fields
+            valid_items = 0
+            for item in session_menu_data:
+                if item and item.get('id') and item.get('name'):
+                    valid_items += 1
+            print(f"📊 Valid items with ID and name: {valid_items}")
+            
+            # Build complete menu context for verification
+            complete_context = get_complete_menu_context(raw_menu_data)
+            print(f"📋 Complete menu context: {len(complete_context)} items")
+            print(f"📋 Sample items: {complete_context[:5] if complete_context else 'None'}")
+        else:
+            session_menu_data = []
+            print("❌ No menu data fetched from API")
         
         await ctx.connect()
         participant = await ctx.wait_for_participant()
@@ -1758,15 +2587,19 @@ async def entrypoint(ctx: JobContext):
         instructions=get_instructions(),
         tools=[
             lookup_add_item_to_cart,
+            select_size,
             select_size_for_item,
+            add_sauce_to_wings,
             add_sauce,
             add_topping,
             delete_customization,
             delete_item,
             clear_cart,
             get_full_menu,
+            get_detailed_menu,
             get_category_menu,
             get_item_details,
+            get_complete_menu_list,
             clarify_item_name,
             process_all_customizations,
             show_pricing_info,
@@ -1792,9 +2625,13 @@ async def entrypoint(ctx: JobContext):
             model="gpt-4o-mini"  # Higher rate limits, faster, more cost-effective
         ),
         tts=elevenlabs.TTS(
-            api_key=ELEVENLABS_API_KEY
+            api_key=ELEVENLABS_API_KEY,
+            voice_id="fDeOZu1sNd7qahm2fV4k"
         )
     )
+    
+    # Set the menu data for this session
+    session.menu_data = session_menu_data
     # Store room reference in session for call termination
     session.room = ctx.room
     
