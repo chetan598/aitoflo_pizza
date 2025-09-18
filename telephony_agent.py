@@ -235,14 +235,21 @@ def format_cart_for_api(cart: list, customer_name: str, phone_number: str = None
     
     # Format items for API
     api_items = []
-    for item in cart:
+    print(f"🔍 DEBUG: Formatting {len(cart)} cart items for API...")
+    
+    for i, item in enumerate(cart):
         if not item:
             continue
+            
+        print(f"🔍 DEBUG: Item {i+1}: {item.get('itemName', 'Unknown')}")
+        print(f"🔍 DEBUG: - Size: {item.get('selectedSize', 'Not set')}")
+        print(f"🔍 DEBUG: - Customizations: {item.get('customizations', [])}")
             
         api_item = {
             "menu_item_id": item.get("itemId"),
             "name": item.get("itemName", ""),
-            "quantity": item.get("quantity", 1)
+            "quantity": item.get("quantity", 1),
+            "size": item.get("selectedSize", "Regular")  # Add size field
         }
         
         # Add customizations if any
@@ -260,7 +267,11 @@ def format_cart_for_api(cart: list, customer_name: str, phone_number: str = None
                     }
                     formatted_customizations.append(custom_data)
             api_item["customizations"] = formatted_customizations
+        else:
+            # Ensure customizations field is always present, even if empty
+            api_item["customizations"] = []
         
+        print(f"🔍 DEBUG: Final API item: {api_item}")
         api_items.append(api_item)
     
     # Create order data
@@ -277,7 +288,39 @@ def format_cart_for_api(cart: list, customer_name: str, phone_number: str = None
         "status": "pending"
     }
     
+    print(f"🔍 DEBUG: Final order data: {order_data}")
+    
+    # Additional verification - check if sizes and customizations are properly included
+    for i, item in enumerate(api_items):
+        print(f"🔍 VERIFICATION: Item {i+1} - Size: {item.get('size', 'MISSING')}, Customizations: {len(item.get('customizations', []))}")
+        if item.get('customizations'):
+            for j, custom in enumerate(item['customizations']):
+                print(f"🔍 VERIFICATION:   Customization {j+1}: {custom.get('name', 'Unknown')} ({custom.get('group', 'Unknown')})")
+    
     return order_data
+
+def test_cart_integrity():
+    """Test function to verify cart items have proper structure"""
+    global user_cart
+    
+    print(f"🔍 CART INTEGRITY TEST: {len(user_cart)} items in cart")
+    
+    for i, item in enumerate(user_cart):
+        if not item:
+            print(f"❌ Item {i+1}: NULL item")
+            continue
+            
+        print(f"🔍 Item {i+1}: {item.get('itemName', 'Unknown')}")
+        print(f"   - Size: {item.get('selectedSize', 'MISSING')}")
+        print(f"   - Customizations: {len(item.get('customizations', []))}")
+        
+        if item.get('customizations'):
+            for j, custom in enumerate(item['customizations']):
+                print(f"     Customization {j+1}: {custom.get('subItemName', 'Unknown')} ({custom.get('subItemGroupName', 'Unknown')})")
+        else:
+            print("     No customizations")
+    
+    return "Cart integrity test completed"
 
 async def load_menu():
     """Always fetch fresh menu data from Supabase API - no caching"""
@@ -2364,9 +2407,12 @@ async def confirm_name_correct() -> str:
     if not customer_name:
         return "I don't have your name yet. What is your name?"
     
-    # Show order summary after name confirmation and ask for final confirmation
+    # Show order summary and then automatically finalize the order
     cart_summary = await get_cart_summary()
-    return f"Perfect! Thank you, {customer_name}. Here's your complete order:\n\n{cart_summary}\n\nIs this order correct? Should I place it now?"
+    print(f"Order summary for {customer_name}: {cart_summary}")
+    
+    # Automatically finalize the order after name confirmation
+    return await finalize_order(customer_name)
 
 @function_tool
 async def correct_name(new_name: str) -> str:
@@ -3491,6 +3537,8 @@ async def finalize_order(customer_name: str) -> str:
     print(f"API SUBMISSION: {'SUCCESS' if success else 'FAILED'}")
     
     if success:
+        # Clear the cart after successful order
+        user_cart.clear()
         # Don't schedule termination immediately - let the user respond first
         return f"Perfect! Thank you, {customer_name}! Your order is confirmed. Order ID: {order_data.get('id', 'Unknown')}. Total: ${total:.2f}. We'll have your meal ready soon. Thank you for choosing Jimmy Neno's Pizza! Is there anything else I can help you with?"
     else:
@@ -3954,3 +4002,4 @@ if __name__ == "__main__":
         entrypoint_fnc=entrypoint,
         agent_name="telephony_agent"
     ))
+
