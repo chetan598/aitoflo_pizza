@@ -586,7 +586,7 @@ def get_popular_suggestions() -> str:
                     clean_name = short_name.replace('*', '').replace('#', '').replace('1.', '').replace('2.', '').replace('3.', '').replace('4.', '').replace('5.', '').replace('6.', '').replace('7.', '').replace('8.', '').replace('9.', '').replace('0.', '')
                     clean_name = ' '.join(clean_name.split())  # Remove extra spaces
                     suggestions.append(clean_name)
-                if len(suggestions) >= 3:  # Limit to 3 suggestions
+                if len(suggestions) >= 10:  # Increased limit to 10 suggestions
                     break
     
     if suggestions:
@@ -1487,6 +1487,11 @@ async def lookup_add_item_to_cart(item_name: str, quantity: int = 1) -> str:
     # Add to cart
     user_cart.append(cart_item)
     
+    # DEBUG: Print cart JSON after adding item with customizations
+    print(f"🔍 DEBUG: Cart after adding item '{cart_item['itemName']}' with customizations:")
+    print(f"🔍 DEBUG: Item customizations: {json.dumps(cart_item.get('customizations', []), indent=2)}")
+    print(f"🔍 DEBUG: Full cart JSON: {json.dumps(user_cart, indent=2)}")
+    
     # Calculate total price including customizations
     total_price = cart_item["itemPrice"] * quantity
     
@@ -1609,6 +1614,11 @@ async def add_sauce_to_wings(sauce_name: str) -> str:
         
         wings_item['customizations'].append(sauce_customization)
         
+        # DEBUG: Print cart JSON after adding sauce to wings
+        print(f"🔍 DEBUG: Cart after adding sauce '{proper_sauce_name}' to wings:")
+        print(f"🔍 DEBUG: Wings item customizations: {json.dumps(wings_item.get('customizations', []), indent=2)}")
+        print(f"🔍 DEBUG: Full cart JSON: {json.dumps(user_cart, indent=2)}")
+        
         # Update conversation context
         update_conversation_context(customization_asked="wings")
         
@@ -1730,6 +1740,11 @@ async def add_sauce(item_id: int, sauce_name: str) -> str:
             target_item["customizations"] = []
         target_item["customizations"].append(customization)
         
+        # DEBUG: Print cart JSON after adding sauce
+        print(f"🔍 DEBUG: Cart after adding sauce '{normalized_sauce}' to item {item_id}:")
+        print(f"🔍 DEBUG: Target item customizations: {json.dumps(target_item.get('customizations', []), indent=2)}")
+        print(f"🔍 DEBUG: Full cart JSON: {json.dumps(user_cart, indent=2)}")
+        
         # Check if all customizations are complete
         if not item_dict or "customization" not in item_dict:
             current_item_customizing = None
@@ -1777,20 +1792,131 @@ async def add_sauce(item_id: int, sauce_name: str) -> str:
         return f"I'm sorry, I encountered an error adding the sauce. Let me help you try again. What sauce would you like?"
 
 @function_tool
+async def add_extra_cheese() -> str:
+    """Add extra cheese to pizza - simple function for common request"""
+    return await add_topping_to_pizza("extra cheese", 1)
+
+@function_tool
+async def add_pepperoni() -> str:
+    """Add pepperoni to pizza - simple function for common request"""
+    return await add_topping_to_pizza("pepperoni", 1)
+
+@function_tool
+async def add_mushrooms() -> str:
+    """Add mushrooms to pizza - simple function for common request"""
+    return await add_topping_to_pizza("mushrooms", 1)
+
+@function_tool
+async def add_olives() -> str:
+    """Add olives to pizza - simple function for common request"""
+    return await add_topping_to_pizza("olives", 1)
+
+@function_tool
+async def add_onions() -> str:
+    """Add onions to pizza - simple function for common request"""
+    return await add_topping_to_pizza("onions", 1)
+
+@function_tool
+async def add_sausage() -> str:
+    """Add sausage to pizza - simple function for common request"""
+    return await add_topping_to_pizza("sausage", 1)
+
+@function_tool
+async def add_sauce_to_wings_simple(sauce_name: str) -> str:
+    """Add sauce to wings - automatically finds wings in cart"""
+    global current_item_customizing, current_state
+    if not user_cart:
+        return "I don't see any items in your cart to customize. Would you like to add something first?"
+    
+    # Find wings item in cart
+    wings_item = None
+    wings_item_id = None
+    for item in reversed(user_cart):
+        if not item or not isinstance(item, dict):
+            continue
+        # Check if this is a wings item (has "wings" in name or is itemId 1)
+        if (item.get("itemName", "").lower().find("wings") != -1 or 
+            item.get("itemId") == 1):
+            wings_item = item
+            wings_item_id = item.get("itemId")
+            break
+    
+    if not wings_item:
+        return "I don't see any wings in your cart to add sauce to. Please add wings first."
+    
+    # Use the existing add_sauce function with the found wings item ID
+    return await add_sauce(wings_item_id, sauce_name)
+
+@function_tool
+async def add_topping_to_pizza(topping_name: str, quantity: int = 1) -> str:
+    """Add topping to pizza - automatically finds pizza in cart"""
+    global current_item_customizing, current_state
+    if not user_cart:
+        return "I don't see any items in your cart to customize. Would you like to add something first?"
+    
+    print(f"🔍 DEBUG: add_topping_to_pizza called with topping: '{topping_name}', quantity: {quantity}")
+    print(f"🔍 DEBUG: Current cart has {len(user_cart)} items")
+    
+    # Find pizza item in cart
+    pizza_item = None
+    pizza_item_id = None
+    for i, item in enumerate(user_cart):
+        if not item or not isinstance(item, dict):
+            continue
+        print(f"🔍 DEBUG: Checking item {i}: {item.get('itemName', 'Unknown')} (ID: {item.get('itemId', 'Unknown')})")
+        # Check if this is a pizza item (has "pizza" in name or is itemId 2)
+        if (item.get("itemName", "").lower().find("pizza") != -1 or 
+            item.get("itemId") == 2):
+            pizza_item = item
+            pizza_item_id = item.get("itemId")
+            print(f"🔍 DEBUG: Found pizza item: {pizza_item.get('itemName')} (ID: {pizza_item_id})")
+            break
+    
+    if not pizza_item:
+        print("🔍 DEBUG: No pizza item found in cart")
+        return "I don't see any pizza in your cart to add toppings to. Please add a pizza first."
+    
+    print(f"🔍 DEBUG: Calling add_topping with item_id={pizza_item_id}, topping_name='{topping_name}'")
+    # Use the existing add_topping function with the found pizza item ID
+    return await add_topping(pizza_item_id, topping_name, quantity)
+
+@function_tool
 async def add_topping(item_id: int, topping_name: str, quantity: int = 1) -> str:
     """Add topping to an item - handles object-based topping options"""
     global current_item_customizing, current_state
+    
+    print(f"🔍 DEBUG: add_topping called with item_id={item_id}, topping_name='{topping_name}', quantity={quantity}")
+    
     if not user_cart:
         return "I don't see any items in your cart to customize. Would you like to add something first?"
     
     # First validate that the item exists in the menu
     item_dict = get_menu_item_by_id(int(item_id))
+    print(f"🔍 DEBUG: get_menu_item_by_id({item_id}) returned: {item_dict is not None}")
+    
+    # Debug: Show available menu items
+    if hasattr(current_session, 'menu_data') and current_session.menu_data:
+        print(f"🔍 DEBUG: Available menu items: {[item.get('id', 'No ID') for item in current_session.menu_data[:10]]}")
+    else:
+        print("🔍 DEBUG: No session menu data available")
+    
+    if item_dict:
+        print(f"🔍 DEBUG: Item name: {item_dict.get('name', 'Unknown')}")
+        print(f"🔍 DEBUG: Has customization: {bool(item_dict.get('customization'))}")
+        if item_dict.get('customization'):
+            print(f"🔍 DEBUG: Customization keys: {list(item_dict['customization'].keys())}")
+    
     if not item_dict:
-        return f"Sorry, I couldn't find that item in our menu. Please try adding a valid item first."
+        # Fallback: If item not found in menu but exists in cart, try to add topping anyway
+        print(f"🔍 DEBUG: Item {item_id} not found in menu, but attempting to add topping anyway")
+        # We'll continue with the process and let the validation happen later
     
     # Check if the item actually has topping customizations available
-    if not item_dict or not item_dict.get("customization", {}).get("Toppings"):
-        return f"Sorry, {item_dict.get('name', 'this item') if item_dict else 'this item'} doesn't have topping options available."
+    if item_dict and (not item_dict.get("customization") or not item_dict.get("customization", {}).get("Toppings")):
+        return f"Sorry, {item_dict.get('name', 'this item')} doesn't have topping options available."
+    elif not item_dict:
+        # If item not found in menu, we'll add the topping with a default price
+        print(f"🔍 DEBUG: Item not in menu, adding topping with default price")
     
     # Find the item in cart - prioritize exact item_id match
     target_item = None
@@ -1826,9 +1952,10 @@ async def add_topping(item_id: int, topping_name: str, quantity: int = 1) -> str
     if not target_item:
         return f"I don't see any items in your cart to customize. Would you like to add something first?"
     
-    # Get the correct price from menu for toppings
-    item_dict = get_menu_item_by_id(int(item_id))
+    # Get the correct price from menu for toppings and validate topping exists
     custom_price = 0.0
+    valid_topping = False
+    original_topping_name = topping_name
     
     if item_dict and "customization" in item_dict and item_dict["customization"]:
         topping_options = item_dict["customization"].get("Toppings", [])
@@ -1837,7 +1964,28 @@ async def add_topping(item_id: int, topping_name: str, quantity: int = 1) -> str
                 continue
             if isinstance(option, dict) and option.get("name", "").lower() == topping_name.lower():
                 custom_price = option.get("price", 0.0)
+                original_topping_name = option.get("name", topping_name)
+                valid_topping = True
                 break
+    
+    # If item not found in menu, allow any topping with default price
+    if not item_dict:
+        valid_topping = True
+        custom_price = 1.0  # Default price for unknown items
+        original_topping_name = topping_name.title()
+        print(f"🔍 DEBUG: Using default price {custom_price} for unknown item")
+    
+    # Validate that the topping exists in the menu (only if item exists in menu)
+    if item_dict and not valid_topping:
+        available_toppings = []
+        if item_dict.get("customization"):
+            topping_options = item_dict["customization"].get("Toppings", [])
+            available_toppings = [option.get("name", "") for option in topping_options if option and isinstance(option, dict)]
+        
+        if available_toppings:
+            return f"Sorry, '{topping_name}' is not a valid topping for this item. Available toppings are: {', '.join(available_toppings[:10])}"
+        else:
+            return f"Sorry, '{topping_name}' is not a valid topping for this item."
     
     # Check if topping already exists
     existing_toppings = [c for c in target_item.get("customizations", []) 
@@ -1849,17 +1997,6 @@ async def add_topping(item_id: int, topping_name: str, quantity: int = 1) -> str
         existing_toppings[0]["quantity"] = existing_toppings[0].get("quantity", 1) + quantity
         logger.info(f"Updated quantity for existing topping: {topping_name}")
         return f"Updated quantity for {topping_name} topping. Current quantity: {existing_toppings[0]['quantity']}"
-    
-    # Find the original topping name for proper display
-    original_topping_name = topping_name  # Use the original input
-    if item_dict and "customization" in item_dict and item_dict["customization"]:
-        topping_options = item_dict["customization"].get("Toppings", [])
-        for option in topping_options:
-            if not option:  # Skip None options
-                continue
-            if isinstance(option, dict) and option.get("name", "").lower() == topping_name.lower():
-                original_topping_name = option.get("name", topping_name)
-                break
     
     # Add the new topping
     customization = {
@@ -1875,6 +2012,11 @@ async def add_topping(item_id: int, topping_name: str, quantity: int = 1) -> str
     target_item["itemPrice"] = target_item.get("itemPrice", 0) + custom_price * quantity
     
     logger.info(f"Added topping: {topping_name} (${custom_price:.2f}) to item {item_id}")
+    
+    # DEBUG: Print cart JSON after adding topping
+    print(f"🔍 DEBUG: Cart after adding topping '{topping_name}' to item {item_id}:")
+    print(f"🔍 DEBUG: Target item customizations: {json.dumps(target_item.get('customizations', []), indent=2)}")
+    print(f"🔍 DEBUG: Full cart JSON: {json.dumps(user_cart, indent=2)}")
     
     # Check if all customizations are complete
     if not item_dict or "customization" not in item_dict:
@@ -3152,7 +3294,7 @@ async def get_category_menu(category: str) -> str:
     else:
         result = f"Here are our {mapped_category} options:\n"
     
-    for item in items[:15]:  # Limit to 15 items
+    for item in items[:50]:  # Increased limit to 50 items
         if not item:
             continue
         short_name = item.get('short_name')
@@ -3360,9 +3502,9 @@ async def clarify_item_name(partial_name: str) -> str:
         return f"I found one item that might match: {matches[0]}. Is this what you're looking for?"
     else:
         result = f"I found several items that might match '{partial_name}':\n\n"
-        result += "\n".join(matches[:5])  # Limit to 5 matches
-        if len(matches) > 5:
-            result += f"\n... and {len(matches) - 5} more items."
+        result += "\n".join(matches[:20])  # Increased limit to 20 matches
+        if len(matches) > 20:
+            result += f"\n... and {len(matches) - 20} more items."
         result += "\n\nCould you please specify which one you'd like?"
         return result
 
@@ -3566,6 +3708,21 @@ async def end_call() -> str:
     return "Call ended. Thank you for choosing Jimmy Neno's Pizza!"
 
 @function_tool
+async def reset_system() -> str:
+    """Reset the system to clear any stuck states"""
+    global current_state, user_cart, current_item_customizing, current_size_selection, customer_name
+    
+    # Reset all global variables
+    current_state = OrderState.TAKING_ORDER
+    user_cart.clear()
+    current_item_customizing = None
+    current_size_selection = None
+    customer_name = None
+    
+    logger.info("System reset - all states cleared")
+    return "System reset! I'm ready to help you with a fresh start. What would you like to order today?"
+
+@function_tool
 async def say_goodbye_and_end_call() -> str:
     """Say goodbye and end the call gracefully after order completion"""
     logger.info("Saying goodbye and ending call after order completion")
@@ -3579,7 +3736,7 @@ async def say_goodbye_and_end_call() -> str:
 
 async def _terminate_call_after_delay():
     """Terminate the call after a brief delay"""
-    await asyncio.sleep(8)  # Wait 8 seconds for final message to be spoken completely
+    await asyncio.sleep(2)  # Reduced delay for faster call termination
     try:
         # Get the current session and end the call
         if 'current_session' in globals() and current_session:
@@ -3607,35 +3764,9 @@ def get_instructions() -> str:
         catalog_text = "Menu Catalog: Loading menu from API..."
     
     professional_prompt = """
-You are Sofia. You are not a program; you are the voice of Jimmy Neno's Pizza. Your entire purpose is to be the friendly, warm, and remarkably helpful voice for the restaurant. The customer on the line is not a user; they are a person. Your goal is to have a conversation that is so natural and pleasant they forget they are speaking to an AI.
-
-### 1. YOUR VOCAL PERSONA: How You Sound
-
--   **Your Tone is a Smile:** Your voice should always sound like you are smiling. It's warm, welcoming, and consistently positive. You are happy to be helping.
--   **Your Pacing is Human:** You speak in shorter, natural sentences and use pauses intentionally. Crucially, you match the customer's pace.
--   **You are an Active Listener:** You use subtle interjections like "Okay..." or "Got it..." to show you are engaged.
--   **You Avoid Vocal Repetition:** You dynamically vary your affirmations: "Awesome choice," "You got it," "Sounds delicious," "Alright."
-
-### 2. YOUR CORE MINDSET: How You Think
-
--   **The Golden Rule: One Question at a Time.** This is the foundation of a natural conversation. Your goal is to only ask for the *next single piece of information you need*. This rule is paramount.
--   **Your Goal is to Make Them Feel Heard:** The order will be correct because you were a great listener, not because you followed a rigid script.
--   **You Lead the Dance:** You are the expert guide, gently leading the conversation and making it easy for the customer.
--   **You are Confidently Calm:** Customers will mumble, change their minds, or have background noise. You are never flustered.
-
-### 3. YOUR CONVERSATIONAL SKILLS: How You Interact
-
--   **Skill 1: Deconstruct and Clarify:** You listen to the customer's entire thought without interrupting. Your brain's first job is to deconstruct their sentence, identifying the core item and any customizations they provided. You then intelligently ask only for what's missing.
--   **Skill 2: Be a Menu Expert:** You understand that only pizzas get toppings and only wings/celery get sauces. You never ask irrelevant questions.
--   **Skill 3: Offer Help, Not Just Options:** When a customization is needed, you help them choose. "For the wings, most people go with either the classic Buffalo or our BBQ sauce. Do either of those sound good?"
--   **Skill 4: Recover with Grace:** When you miss something, you handle it with human-like humility. "Sorry, the connection crackled for a second there. What was that last topping?"
-
-### 4. THE UNDERLYING FRAMEWORK: Your Secret Structure
-
--   **The Opening:** A warm, simple greeting. "Thanks for calling Jimmy Neno's Pizza, this is Sofia. What can I get started for you?"
--   **The Fluid Conversation Cycle:** You listen, add an item (`lookup_add_item_to_cart`), gather details one by one (`add_customization`), and then transition smoothly ("Alright, that's all set. What's the next thing for you?").
--   **The Final Confirmation:** You signal the end ("Okay, let me read that back..."), call `get_cart_summary` once, recite the order, get the name (`set_customer_name`), and close the call (`end_call`).
-"""
+{
+  "general_prompt": "### 1. Your Persona: Sofia, The Voice of Jimmy Neno's Pizza\n\n*Role: You are Sofia. You are not a program; you are the friendly, warm, and remarkably helpful voice of the restaurant. The customer is a person, not a user. Your goal is a conversation so natural they forget they're talking to an AI.\n\nPersonality: You are cheerful, calm, and conversational. You're not just an order-taker; you're a helpful guide. You use light, friendly language to make people feel welcome.\n\nVocal Style: Your tone is a smile. You use natural-sounding affirmations and vary them constantly. Instead of just 'Okay,' you say, 'You got it,' 'Awesome choice,' 'Sounds delicious,' or 'Alrighty then!'. You are an active listener, using small interjections like 'Mhm...' and 'Got it...' to show you're engaged.\n\n### 2. Your Core Mindset: How You Think\n\nThe First Principle: Listen and Deconstruct.* This is your most important skill. You must listen to the customer's entire sentence without interrupting. Your first job is to deconstruct their phrase, identifying the core item and *any customizations they provided at the same time. \n   *Example: If a customer says, \"I'll get a 24 count of BBQ wings,\" your brain immediately understands: \n    *   Item: Wings\n    *   Quantity: 24\n    *   Sauce: BBQ\n    You will NOT ask them for the sauce again. You will intelligently move to the *next logical question.\n\n*The Second Principle: One *Missing Question at a Time.** After you deconstruct what they've said, you only ask for the very next piece of information you need. Your goal is to never ask a question the customer has already answered.\n\n*The Third Principle: No Intermediate Summaries.* You are confident and a great listener. Do NOT read back an item's details right after adding them. The only time you summarize the order is at the very end of the call. This is crucial for a smooth, fast-paced conversation.\n\n### 3. Example of Your Desired Behavior\n\n*Scenario: Customer wants wings.\n\nCustomer: \"Hey, can I get an order of 24 BBQ wings?\"\n\nYour Thought Process: \n1.  Item: wings. Quantity: 24. Sauce: BBQ.\n2.  Okay, I have the main item and a key customization (the sauce).\n3.  The next logical question for wings is about sides like ranch or celery.\n\nYour Response (Correct): \"24 BBQ wings, you got it! Sounds delicious. Did you want to add any celery or ranch with that today?\"\n\nYour Response (INCORRECT)*: \"Okay, 24 wings. And what sauce would you like on those?\""
+}"""
 
     if current_state == OrderState.TAKING_ORDER:
         # Instructions for the beginning of the call or after an item is completed.
@@ -3643,21 +3774,11 @@ You are Sofia. You are not a program; you are the voice of Jimmy Neno's Pizza. Y
         return (
             professional_prompt + "\n\n" +
             catalog_text + "\n\n" +
-            """STATE: TAKING_ORDER
-You are in a conversation to take an order. Your goal is to understand what item the customer wants to start with or add next.
-
--   Listen First: Use your "Deconstruct and Clarify" skill to identify the core item the customer wants.
--   Handling Menu Questions:
-    -   If asked "what do you have," use `get_full_menu()` to list main categories.
-    -   If asked for a specific category, use `get_category_menu()` to list items within it conversationally.
--   Identifying an Item:
-    -   Once you identify an item (e.g., "I'll take a pizza"), use `lookup_add_item_to_cart()`.
-    -   If it requires details, you will smoothly transition to the CUSTOMIZING state.
--   Technical Rules:
-    -   If you can't understand an item, use `clarify_item_name()`.
-    -   Use `get_item_details()` for the price of a specific menu item.
-    -   Use `get_cart_total()` for the current running total.
-    -   Never say item numbers or IDs out loud.
+            """{
+  "name": "TAKING_ORDER",
+  "state_prompt": "Your role is to listen for the customer's request, identify the item, and capture any details they provide upfront. This is your primary listening mode.\n\n*Main Tasks:\n\n1.  **Greet Warmly: Start the call with a friendly, open-ended greeting: \"Thanks for calling Jimmy Neno's Pizza, this is Sofia! What can I get started for you?\"\n2.  **Listen and Deconstruct: Use your core skill to listen to their full request. Identify the main item (e.g., 'pizza') AND any initial details ('large,' 'pepperoni').\n3.  **Act Sequentially*: First, use lookup_add_item_to_cart for the main item. Immediately after, use add_customization for any details you already captured (like size or toppings). \n4.  *Transition to Customizing: After processing what they've already told you, you will **silently transition to the CUSTOMIZING state* to ask for any remaining information.",
+  "tools": ["lookup_add_item_to_cart", "get_full_menu", "get_category_menu", "clarify_item_name", "get_item_details", "add_customization"]
+}
 """
         )
     elif current_state == OrderState.CUSTOMIZING:
@@ -3666,13 +3787,11 @@ You are in a conversation to take an order. Your goal is to understand what item
         return (
             professional_prompt + "\n\n" +
             catalog_text + "\n\n" +
-            """STATE: CUSTOMIZING
-You are helping a customer customize a specific item. Your goal is to make this easy by asking one simple question at a time.
-
--   The Golden Rule: Follow the "One Question at a Time" rule strictly. First, ask for Size (if applicable). Once you have the size, ask for the Topping or Sauce.
--   Know the Rules: Before asking, confirm the item actually has customizations. Gently state the rules ("You can pick one sauce for the wings.").
--   Use Tools: Use `add_sauce()` or `add_topping()` for each selection. Use `remove_customization_by_name()` if they change their mind.
--   The Transition Out: When customizations are done, confirm it ("Alright, a large pizza with pepperoni, got it.") and immediately ask: "Perfect! What else can I get for you today?" to move on.
+            """{
+  "name": "CUSTOMIZING",
+  "state_prompt": "Your goal here is to intelligently gather *only the missing details* for an item. You are a helpful guide, not a checklist.\n\n*Main Tasks:\n\n1.  **Acknowledge What You Know: You've already processed the customer's initial statement. You now know what information is still missing.\n2.  **Ask the Next Logical Question: Following the 'One Missing Question at a Time' rule, ask for the next required detail. For a pizza where the size is known, you'd ask about toppings. For the 'BBQ wings' example, you would ask about adding ranch.\n3.  **Add Customization*: As they provide each new piece of information, use the add_customization tool.\n4.  *Transition Out Smoothly*: Once all required details are gathered, make a conversational transition. Ask warmly, \"Alrighty! And what else can I get for you today?\" This naturally moves the conversation forward, either to the next item (TAKING_ORDER) or to the end of the order (FINALIZING).",
+  "tools": ["add_customization", "remove_customization_by_name"]
+}
 """
         )
     elif current_state == OrderState.COLLECTING_ITEMS:
@@ -3681,13 +3800,11 @@ You are helping a customer customize a specific item. Your goal is to make this 
         return (
             professional_prompt + "\n\n" +
             catalog_text + "\n\n" +
-            """STATE: COLLECTING_ITEMS
-You have successfully added an item and are waiting for the customer's next request. Your focus is on continuing the conversation smoothly.
-
--   Listen for the Next Request:
-    -   If they name a new item ("we also need wings"), use `lookup_add_item_to_cart()` and re-enter the ordering/customizing cycle.
-    -   If they say "that's it," initiate the FINALIZING state.
--   Maintain the Flow: If there's a pause, gently prompt with, "Was there anything else for you?"
+            """{
+  "name": "CUSTOMIZING",
+  "state_prompt": "Your goal here is to intelligently gather *only the missing details* for an item. You are a helpful guide, not a checklist.\n\n*Main Tasks:\n\n1.  **Acknowledge What You Know: You've already processed the customer's initial statement. You now know what information is still missing.\n2.  **Ask the Next Logical Question: Following the 'One Missing Question at a Time' rule, ask for the next required detail. For a pizza where the size is known, you'd ask about toppings. For the 'BBQ wings' example, you would ask about adding ranch.\n3.  **Add Customization*: As they provide each new piece of information, use the add_customization tool.\n4.  *Transition Out Smoothly*: Once all required details are gathered, make a conversational transition. Ask warmly, \"Alrighty! And what else can I get for you today?\" This naturally moves the conversation forward, either to the next item (TAKING_ORDER) or to the end of the order (FINALIZING).",
+  "tools": ["add_customization", "remove_customization_by_name"]
+}
 """
         )
     else:  # Assuming this handles FINALIZING state
@@ -3695,16 +3812,11 @@ You have successfully added an item and are waiting for the customer's next requ
         # Focus: Confirming, getting the name, and closing warmly.
         return (
             professional_prompt + "\n\n" +
-            """STATE: FINALIZING
-The customer is finished ordering. Your goal is to complete the transaction in a few clear, professional, and friendly steps.
-
-1.  Signal Confirmation: Say, "Okay, let me just read everything back to you to make sure I have it all correct."
-2.  Recite the Order: Call `get_cart_summary()` ONCE. Read the items and final total conversationally. Example: "...and your total is $32.50. Does that all sound right?"
-3.  Get the Name: Once confirmed, ask simply: "Great. And what's the name for the order?"
-4.  Finalize and Close:
-    -   Immediately after getting the name, use `finalize_order()`.
-    -   Provide a warm closing with a pickup time. Example: "Thank you, John! We'll have that ready for you in about 20 minutes. We'll see you soon!"
-    -   Use `end_call()` to terminate the call.
+            """{
+  "name": "FINALIZING",
+  "state_prompt": "Your role is to provide one final, clear summary and close the call warmly. This is the *only* time you will read the order back.\n\n*Main Tasks (Follow in this exact order):\n\n1.  **Signal the Summary: Start with a friendly phrase: \"Okay, sounds great! Let me just do a quick read-back to make sure I got everything perfect for you.\"\n2.  **Recite the Full Order*: Call get_cart_summary *ONCE. Read the items and the final total conversationally. Then confirm: \"Does that all sound correct?\"\n3.  **Get the Customer's Name: Once they agree, ask simply: \"Perfect. And what's the name for the order?\"\n4.  **Finalize and Close*: After getting the name, use set_customer_name and finalize_order. Then provide a warm closing: \"Thank you so much, [Customer's Name]! We'll have that ready for you in about 20 minutes. We'll see you soon!\"\n5.  *End the Call*: Use the end_call tool.",
+  "tools": ["get_cart_summary", "set_customer_name", "finalize_order", "end_call"]
+}
 """
         )
 
@@ -3716,7 +3828,7 @@ class CustomAgentSession(AgentSession):
         self.start_time = asyncio.get_event_loop().time()
         self._last_activity = self.start_time
         self.menu_data = []  # Store raw menu data for ID-based lookup
-        self._vad_response_delay = 0.8  # 800ms delay after VAD detects speech end
+        self._vad_response_delay = 0.2  # Reduced delay for faster response
         self._last_speech_time = 0
         logger.info(f"New session started: {self.session_id}")
     
@@ -3780,25 +3892,25 @@ class CustomAgentSession(AgentSession):
             # Include complete menu context (all items with just name and ID)
             enhanced_prompt = f"{prompt}\n\n[MENU CATALOG]\n{json.dumps(menu_context)}"
             
-            # Generate response with timeout and retry logic
-            max_retries = 3
+            # Generate response with unlimited retries and extended timeout
+            max_retries = 999  # Effectively unlimited retries
             for attempt in range(max_retries):
                 try:
                     response = await asyncio.wait_for(
                         super().generate_reply(instructions=enhanced_prompt),
-                        timeout=15.0  # Reduced timeout for faster recovery
+                        timeout=60.0  # Extended timeout for better reliability
                     )
                     break
                 except asyncio.TimeoutError:
                     logger.warning(f"Response generation timeout in session {self.session_id}, attempt {attempt + 1}")
-                    if attempt == max_retries - 1:
+                    if attempt >= 10:  # Only give up after 10 attempts
                         return "I'm having trouble processing your request. Could you please repeat what you'd like to order?"
-                    await asyncio.sleep(1)  # Brief pause before retry
+                    await asyncio.sleep(0.5)  # Shorter pause for faster retry
                 except Exception as e:
                     logger.error(f"Response generation error in session {self.session_id}, attempt {attempt + 1}: {e}")
-                    if attempt == max_retries - 1:
+                    if attempt >= 10:  # Only give up after 10 attempts
                         return "I'm having trouble processing your request. Could you please repeat what you'd like to order?"
-                    await asyncio.sleep(1)  # Brief pause before retry
+                    await asyncio.sleep(0.5)  # Shorter pause for faster retry
             
             # Add natural pauses for options
             response = await self._add_pause_for_options(response)
@@ -3806,8 +3918,8 @@ class CustomAgentSession(AgentSession):
             return response
         except Exception as e:
             logger.error(f"Critical error in session {self.session_id}: {str(e)}")
-            # Return a simple response that won't cause TTS issues
-            return "I apologize, but I'm experiencing a technical issue. Let me help you start fresh. What would you like to order today?"
+            # Return a simple response that won't cause TTS issues and keep the conversation going
+            return "I'm here to help! What would you like to order today?"
 
     async def end_call_gracefully(self):
         """End the call gracefully after order completion"""
@@ -3954,7 +4066,15 @@ async def entrypoint(ctx: JobContext):
             select_size,
             select_size_for_item,
             add_sauce_to_wings,
+            add_sauce_to_wings_simple,
             add_sauce,
+            add_extra_cheese,
+            add_pepperoni,
+            add_mushrooms,
+            add_olives,
+            add_onions,
+            add_sausage,
+            add_topping_to_pizza,
             add_topping,
             delete_customization,
             delete_item,
@@ -3962,6 +4082,7 @@ async def entrypoint(ctx: JobContext):
             process_all_customizations,
             show_pricing_info,
             finalize_order,
+            reset_system,
             say_goodbye_and_end_call
         ]
     )
