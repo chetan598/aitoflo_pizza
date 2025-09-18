@@ -1642,12 +1642,23 @@ async def add_sauce(item_id: int, sauce_name: str) -> str:
         
         # First validate that the item exists in the menu
         item_dict = get_menu_item_by_id(int(item_id))
+        print(f"🔍 DEBUG: get_menu_item_by_id({item_id}) returned: {item_dict is not None}")
+        
         if not item_dict:
-            return f"Sorry, I couldn't find that item in our menu. Please try adding a valid item first."
+            print(f"🔍 DEBUG: Item {item_id} not found in menu, but attempting to add sauce anyway")
+            # We'll continue with the process and let the validation happen later
+        else:
+            print(f"🔍 DEBUG: Item name: {item_dict.get('name', 'Unknown')}")
+            print(f"🔍 DEBUG: Has customization: {bool(item_dict.get('customization'))}")
+            if item_dict.get('customization'):
+                print(f"🔍 DEBUG: Customization keys: {list(item_dict['customization'].keys())}")
         
         # Check if the item actually has sauce customizations available
-        if not item_dict or not item_dict.get("customization", {}).get("Sauce"):
-            return f"Sorry, {item_dict.get('name', 'this item') if item_dict else 'this item'} doesn't have sauce options available."
+        if item_dict and (not item_dict.get("customization") or not item_dict.get("customization", {}).get("Sauce")):
+            return f"Sorry, {item_dict.get('name', 'this item')} doesn't have sauce options available."
+        elif not item_dict:
+            # If item not found in menu, we'll add the sauce with a default price
+            print(f"🔍 DEBUG: Item not in menu, adding sauce with default price")
         
         # Find the item in cart - prioritize exact item_id match
         target_item = None
@@ -1699,13 +1710,17 @@ async def add_sauce(item_id: int, sauce_name: str) -> str:
                     sauce_name = sauce.get('name', '')
                     sauce_names.append(sauce_name)
                     sauce_names_lower.append(sauce_name.lower())
-        else:
+                else:
                     sauce_name = str(sauce)
                     sauce_names.append(sauce_name)
                     sauce_names_lower.append(sauce_name.lower())
-        
-        if normalized_sauce not in sauce_names_lower:
+            
+            if normalized_sauce not in sauce_names_lower:
                 return f"Sorry, '{sauce_name}' is not available for this item. Available sauces are: {', '.join(sauce_names)}"
+        elif not item_dict:
+            # If item not found in menu, allow any sauce with default price
+            print(f"🔍 DEBUG: Item not in menu, allowing any sauce with default price")
+            available_sauces = []  # Empty list means we'll allow any sauce
         else:
             return f"Sorry, this item doesn't have sauce options. This item has toppings instead. Would you like to add toppings instead?"
         
@@ -1848,6 +1863,100 @@ async def add_sauce_to_wings_simple(sauce_name: str) -> str:
     return await add_sauce(wings_item_id, sauce_name)
 
 @function_tool
+async def add_sauce_to_celery(sauce_name: str) -> str:
+    """Add sauce to celery - automatically finds celery in cart"""
+    global current_item_customizing, current_state
+    if not user_cart:
+        return "I don't see any items in your cart to customize. Would you like to add something first?"
+    
+    print(f"🔍 DEBUG: add_sauce_to_celery called with sauce: '{sauce_name}'")
+    print(f"🔍 DEBUG: Current cart has {len(user_cart)} items")
+    
+    # Find celery item in cart
+    celery_item = None
+    celery_item_id = None
+    for i, item in enumerate(user_cart):
+        if not item or not isinstance(item, dict):
+            continue
+        print(f"🔍 DEBUG: Checking item {i}: {item.get('itemName', 'Unknown')} (ID: {item.get('itemId', 'Unknown')})")
+        # Check if this is a celery item (has "celery" in name or is itemId 4)
+        if (item.get("itemName", "").lower().find("celery") != -1 or 
+            item.get("itemId") == 4):
+            celery_item = item
+            celery_item_id = item.get("itemId")
+            print(f"🔍 DEBUG: Found celery item: {celery_item.get('itemName')} (ID: {celery_item_id})")
+            break
+    
+    if not celery_item:
+        print("🔍 DEBUG: No celery item found in cart")
+        return "I don't see any celery in your cart to add sauce to. Please add celery first."
+    
+    print(f"🔍 DEBUG: Calling add_sauce with item_id={celery_item_id}, sauce_name='{sauce_name}'")
+    # Use the existing add_sauce function with the found celery item ID
+    return await add_sauce(celery_item_id, sauce_name)
+
+@function_tool
+async def add_sauce_to_mushrooms(sauce_name: str) -> str:
+    """Add sauce to fried mushrooms - automatically finds mushrooms in cart"""
+    global current_item_customizing, current_state
+    if not user_cart:
+        return "I don't see any items in your cart to customize. Would you like to add something first?"
+    
+    print(f"🔍 DEBUG: add_sauce_to_mushrooms called with sauce: '{sauce_name}'")
+    print(f"🔍 DEBUG: Current cart has {len(user_cart)} items")
+    
+    # Find mushrooms item in cart
+    mushrooms_item = None
+    mushrooms_item_id = None
+    for i, item in enumerate(user_cart):
+        if not item or not isinstance(item, dict):
+            continue
+        print(f"🔍 DEBUG: Checking item {i}: {item.get('itemName', 'Unknown')} (ID: {item.get('itemId', 'Unknown')})")
+        # Check if this is a mushrooms item (has "mushroom" in name or is itemId 9)
+        if (item.get("itemName", "").lower().find("mushroom") != -1 or 
+            item.get("itemId") == 9):
+            mushrooms_item = item
+            mushrooms_item_id = item.get("itemId")
+            print(f"🔍 DEBUG: Found mushrooms item: {mushrooms_item.get('itemName')} (ID: {mushrooms_item_id})")
+            break
+    
+    if not mushrooms_item:
+        print("🔍 DEBUG: No mushrooms item found in cart")
+        return "I don't see any fried mushrooms in your cart to add sauce to. Please add fried mushrooms first."
+    
+    print(f"🔍 DEBUG: Calling add_sauce with item_id={mushrooms_item_id}, sauce_name='{sauce_name}'")
+    # Use the existing add_sauce function with the found mushrooms item ID
+    return await add_sauce(mushrooms_item_id, sauce_name)
+
+@function_tool
+async def add_ranch_sauce() -> str:
+    """Add ranch sauce to celery or mushrooms - simple function for common request"""
+    # Try celery first, then mushrooms
+    celery_result = await add_sauce_to_celery("ranch")
+    if "don't see any celery" not in celery_result.lower():
+        return celery_result
+    
+    mushrooms_result = await add_sauce_to_mushrooms("ranch")
+    if "don't see any" not in mushrooms_result.lower():
+        return mushrooms_result
+    
+    return "I don't see any celery or fried mushrooms in your cart to add ranch sauce to. Please add one of these items first."
+
+@function_tool
+async def add_blue_cheese_sauce() -> str:
+    """Add blue cheese sauce to celery or mushrooms - simple function for common request"""
+    # Try celery first, then mushrooms
+    celery_result = await add_sauce_to_celery("blue cheese")
+    if "don't see any celery" not in celery_result.lower():
+        return celery_result
+    
+    mushrooms_result = await add_sauce_to_mushrooms("blue cheese")
+    if "don't see any" not in mushrooms_result.lower():
+        return mushrooms_result
+    
+    return "I don't see any celery or fried mushrooms in your cart to add blue cheese sauce to. Please add one of these items first."
+
+@function_tool
 async def add_topping_to_pizza(topping_name: str, quantity: int = 1) -> str:
     """Add topping to pizza - automatically finds pizza in cart"""
     global current_item_customizing, current_state
@@ -1864,9 +1973,10 @@ async def add_topping_to_pizza(topping_name: str, quantity: int = 1) -> str:
         if not item or not isinstance(item, dict):
             continue
         print(f"🔍 DEBUG: Checking item {i}: {item.get('itemName', 'Unknown')} (ID: {item.get('itemId', 'Unknown')})")
-        # Check if this is a pizza item (has "pizza" in name or is itemId 2)
+        # Check if this is a pizza item (has "pizza" in name or is any pizza itemId with toppings)
+        # Pizza items with toppings: 2 (12 Inch), 3 (Personal), 40 (Build Your Own Personal), 41 (Build Your Own 12 Inch), 42 (Build Your Own Half Sheet)
         if (item.get("itemName", "").lower().find("pizza") != -1 or 
-            item.get("itemId") == 2):
+            item.get("itemId") in [2, 3, 40, 41, 42]):
             pizza_item = item
             pizza_item_id = item.get("itemId")
             print(f"🔍 DEBUG: Found pizza item: {pizza_item.get('itemName')} (ID: {pizza_item_id})")
@@ -2618,6 +2728,7 @@ async def calculate_order_total() -> str:
         item_name = item.get("itemName", "Unknown Item")
         quantity = item.get("quantity", 1)
         size = item.get("selectedSize", "")
+        customizations = item.get("customizations", [])
         
         item_desc = f"{quantity}x {item_name}"
         if size:
@@ -2686,8 +2797,14 @@ async def finalize_order_with_name() -> str:
         # Clear the cart and reset state
         user_cart.clear()
         customer_name = None
+        # Schedule call termination after final greeting
+        import asyncio
+        asyncio.create_task(_terminate_call_after_delay())
         return f"Perfect! Your order has been placed successfully, {final_customer_name}. Thank you for choosing Jimmy Neno's Pizza! Have a great day and goodbye!"
     else:
+        # Schedule call termination even for failed orders
+        import asyncio
+        asyncio.create_task(_terminate_call_after_delay())
         return f"I apologize, {final_customer_name}, but there was an issue placing your order. Please call us directly at the restaurant. Thank you and goodbye!"
 
 @function_tool
@@ -3689,11 +3806,15 @@ async def finalize_order(customer_name: str) -> str:
     if success:
         # Clear the cart after successful order
         user_cart.clear()
-        # Don't schedule termination immediately - let the user respond first
-        return f"Perfect! Thank you, {customer_name}! Your order is confirmed. Order ID: {order_data.get('id', 'Unknown')}. Total: ${total:.2f}. We'll have your meal ready soon. Thank you for choosing Jimmy Neno's Pizza! Is there anything else I can help you with?"
+        # Schedule call termination after final greeting
+        import asyncio
+        asyncio.create_task(_terminate_call_after_delay())
+        return f"Perfect! Thank you, {customer_name}! Your order is confirmed. Order ID: {order_data.get('id', 'Unknown')}. Total: ${total:.2f}. We'll have your meal ready soon. Thank you for choosing Jimmy Neno's Pizza! Have a great day and goodbye!"
     else:
-        # Don't schedule termination immediately - let the user respond first
-        return f"Thank you, {customer_name}! Your order is confirmed locally. Total: ${total:.2f}. We have your order details and will process it. Thank you for choosing Jimmy Neno's Pizza! Is there anything else I can help you with?"
+        # Schedule call termination even for failed orders
+        import asyncio
+        asyncio.create_task(_terminate_call_after_delay())
+        return f"Thank you, {customer_name}! Your order is confirmed locally. Total: ${total:.2f}. We have your order details and will process it. Thank you for choosing Jimmy Neno's Pizza! Have a great day and goodbye!"
 
 @function_tool
 async def end_call() -> str:
@@ -4067,6 +4188,10 @@ async def entrypoint(ctx: JobContext):
             select_size_for_item,
             add_sauce_to_wings,
             add_sauce_to_wings_simple,
+            add_sauce_to_celery,
+            add_sauce_to_mushrooms,
+            add_ranch_sauce,
+            add_blue_cheese_sauce,
             add_sauce,
             add_extra_cheese,
             add_pepperoni,
