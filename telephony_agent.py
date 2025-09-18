@@ -244,6 +244,7 @@ def format_cart_for_api(cart: list, customer_name: str, phone_number: str = None
         print(f"🔍 DEBUG: Item {i+1}: {item.get('itemName', 'Unknown')}")
         print(f"🔍 DEBUG: - Size: {item.get('selectedSize', 'Not set')}")
         print(f"🔍 DEBUG: - Customizations: {item.get('customizations', [])}")
+        print(f"🔍 DEBUG: - Full item structure: {json.dumps(item, indent=2)}")
             
         api_item = {
             "menu_item_id": item.get("itemId"),
@@ -271,7 +272,7 @@ def format_cart_for_api(cart: list, customer_name: str, phone_number: str = None
             # Ensure customizations field is always present, even if empty
             api_item["customizations"] = []
         
-        print(f"🔍 DEBUG: Final API item: {api_item}")
+        print(f"🔍 DEBUG: Final API item: {json.dumps(api_item, indent=2)}")
         api_items.append(api_item)
     
     # Create order data
@@ -2527,6 +2528,13 @@ async def finalize_order_with_name() -> str:
     final_customer_name = customer_name
     
     # Format cart for API submission
+    print(f"🔍 DEBUG: Cart before API formatting (finalize_order_with_name) - {len(user_cart)} items")
+    for i, item in enumerate(user_cart):
+        print(f"🔍 DEBUG: Cart item {i+1}: {item.get('itemName', 'Unknown')} - Customizations: {len(item.get('customizations', []))}")
+        if item.get('customizations'):
+            for j, custom in enumerate(item['customizations']):
+                print(f"🔍 DEBUG:   Customization {j+1}: {custom.get('subItemName', 'Unknown')} ({custom.get('subItemGroupName', 'Unknown')})")
+    
     order_data = format_cart_for_api(user_cart, customer_name)
     
     # Submit order to API - SINGLE REQUEST PER SESSION
@@ -4002,4 +4010,3 @@ if __name__ == "__main__":
         entrypoint_fnc=entrypoint,
         agent_name="telephony_agent"
     ))
-
