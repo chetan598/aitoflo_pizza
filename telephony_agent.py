@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Any
 from enum import Enum
 from dotenv import load_dotenv
 from livekit.agents import (
-    Agent, AgentSession, JobContext, WorkerOptions, cli, function_tool
+    Agent, AgentSession, JobContext, WorkerOptions, cli, function_tool, RunContext
 )
 from livekit.plugins import deepgram, openai, silero, elevenlabs
 
@@ -1389,9 +1389,19 @@ def parse_item_specifications(item_name: str) -> dict:
     return specifications
 
 @function_tool
-async def lookup_add_item_to_cart(item_name: str, quantity: int = 1) -> str:
+async def lookup_add_item_to_cart(item_name: str, quantity: int = 1, ctx: RunContext = None) -> str:
     """Look up an item by name and add it to the cart with all customizations in one step"""
     global current_item_customizing, current_state, current_size_selection
+    
+    # Generate and speak dynamic message immediately when tool starts (don't wait)
+    if ctx:
+        try:
+            dynamic_message = get_dynamic_tool_message('lookup_add_item_to_cart', item_name=item_name, quantity=quantity)
+            # Speak immediately but don't wait for completion - let tool execute in parallel
+            asyncio.create_task(ctx.session.say(dynamic_message))
+        except Exception as e:
+            logger.warning(f"Failed to speak dynamic message: {e}")
+            # Continue with tool execution even if speech fails
     
     # Parse all customizations from the item name
     specifications = parse_item_specifications(item_name)
@@ -2184,9 +2194,19 @@ async def update_item_customization(item_name: str, customization_type: str, old
     return f"I couldn't find {item_name} in your order. Could you please check the item name?"
 
 @function_tool
-async def add_item_basic(item_name: str, quantity: int = 1) -> str:
+async def add_item_basic(item_name: str, quantity: int = 1, ctx: RunContext = None) -> str:
     """Add item to cart directly - no confirmation needed to avoid repeated questions"""
     global user_cart, current_item_customizing, customization_step, session_id
+    
+    # Generate and speak dynamic message immediately when tool starts (don't wait)
+    if ctx:
+        try:
+            dynamic_message = get_dynamic_tool_message('add_item_basic', item_name=item_name, quantity=quantity)
+            # Speak immediately but don't wait for completion - let tool execute in parallel
+            asyncio.create_task(ctx.session.say(dynamic_message))
+        except Exception as e:
+            logger.warning(f"Failed to speak dynamic message: {e}")
+            # Continue with tool execution even if speech fails
     
     # Safely convert input to string
     item_name = safe_string_conversion(item_name, "add_item_basic")
@@ -2207,9 +2227,19 @@ async def add_item_basic(item_name: str, quantity: int = 1) -> str:
     return await confirm_add_item(item_name, quantity)
 
 @function_tool
-async def confirm_add_item(item_name: str, quantity: int = 1) -> str:
+async def confirm_add_item(item_name: str, quantity: int = 1, ctx: RunContext = None) -> str:
     """Add item to cart with duplicate prevention - no repeated confirmations"""
     global current_item_customizing, customization_step, session_id
+    
+    # Generate and speak dynamic message immediately when tool starts (don't wait)
+    if ctx:
+        try:
+            dynamic_message = get_dynamic_tool_message('confirm_add_item', item_name=item_name, quantity=quantity)
+            # Speak immediately but don't wait for completion - let tool execute in parallel
+            asyncio.create_task(ctx.session.say(dynamic_message))
+        except Exception as e:
+            logger.warning(f"Failed to speak dynamic message: {e}")
+            # Continue with tool execution even if speech fails
     
     # Find item by name
     item = get_menu_item_by_name(item_name)
@@ -2291,9 +2321,19 @@ async def confirm_add_item(item_name: str, quantity: int = 1) -> str:
             return f"Excellent! I've added ({item.get('name')}, {item.get('id')}) to your cart for {format_price_for_speech(total)}. What else would you like to order?"
 
 @function_tool
-async def update_item_size(size_name: str) -> str:
+async def update_item_size(size_name: str, ctx: RunContext = None) -> str:
     """Step 2: Update the current item with selected size using (name, id) references"""
     global user_cart, current_item_customizing, customization_step
+    
+    # Generate and speak dynamic message immediately when tool starts (don't wait)
+    if ctx:
+        try:
+            dynamic_message = get_dynamic_tool_message('update_item_size', size_name=size_name)
+            # Speak immediately but don't wait for completion - let tool execute in parallel
+            asyncio.create_task(ctx.session.say(dynamic_message))
+        except Exception as e:
+            logger.warning(f"Failed to speak dynamic message: {e}")
+            # Continue with tool execution even if speech fails
     
     if not current_item_customizing:
         return "I don't see any item being customized. Please add an item first."
@@ -2338,9 +2378,19 @@ async def update_item_size(size_name: str) -> str:
     return "I couldn't find the item to update. Please try again."
 
 @function_tool
-async def update_item_sauce(sauce_name: str) -> str:
+async def update_item_sauce(sauce_name: str, ctx: RunContext = None) -> str:
     """Step 3: Update the current item with selected sauce using (name, id) references"""
     global user_cart, current_item_customizing, customization_step
+    
+    # Generate and speak dynamic message immediately when tool starts (don't wait)
+    if ctx:
+        try:
+            dynamic_message = get_dynamic_tool_message('update_item_sauce', sauce_name=sauce_name)
+            # Speak immediately but don't wait for completion - let tool execute in parallel
+            asyncio.create_task(ctx.session.say(dynamic_message))
+        except Exception as e:
+            logger.warning(f"Failed to speak dynamic message: {e}")
+            # Continue with tool execution even if speech fails
     
     # Safely convert input to string
     sauce_name = safe_string_conversion(sauce_name, "update_item_sauce")
@@ -2406,9 +2456,19 @@ async def update_item_sauce(sauce_name: str) -> str:
     return "I couldn't find the item to update. Please try again."
 
 @function_tool
-async def update_item_toppings(topping_name: str) -> str:
+async def update_item_toppings(topping_name: str, ctx: RunContext = None) -> str:
     """Step 3: Update the current item with selected toppings using (name, id) references"""
     global user_cart, current_item_customizing, customization_step
+    
+    # Generate and speak dynamic message immediately when tool starts (don't wait)
+    if ctx:
+        try:
+            dynamic_message = get_dynamic_tool_message('update_item_toppings', topping_name=topping_name)
+            # Speak immediately but don't wait for completion - let tool execute in parallel
+            asyncio.create_task(ctx.session.say(dynamic_message))
+        except Exception as e:
+            logger.warning(f"Failed to speak dynamic message: {e}")
+            # Continue with tool execution even if speech fails
     
     # Safely convert input to string
     topping_name = safe_string_conversion(topping_name, "update_item_toppings")
@@ -2467,8 +2527,18 @@ async def update_item_toppings(topping_name: str) -> str:
     return "I couldn't find the item to update. Please try again."
 
 @function_tool
-async def get_cart_summary() -> str:
+async def get_cart_summary(ctx: RunContext = None) -> str:
     """Get a summary of the current cart using (name, id) references"""
+    # Generate and speak dynamic message immediately when tool starts (don't wait)
+    if ctx:
+        try:
+            dynamic_message = get_dynamic_tool_message('get_cart_summary')
+            # Speak immediately but don't wait for completion - let tool execute in parallel
+            asyncio.create_task(ctx.session.say(dynamic_message))
+        except Exception as e:
+            logger.warning(f"Failed to speak dynamic message: {e}")
+            # Continue with tool execution even if speech fails
+    
     if not user_cart:
         return "Your cart is empty. What would you like to order?"
     
@@ -3946,6 +4016,79 @@ def safe_string_conversion(input_value, function_name="unknown"):
     else:
         logger.error(f"{function_name} received unexpected type: {type(input_value)}")
         return str(input_value) if input_value is not None else ""
+
+def get_dynamic_tool_message(tool_name: str, **kwargs) -> str:
+    """Generate dynamic messages based on the tool being called"""
+    messages = {
+        'add_item_basic': [
+            "Let me add that to your order right away!",
+            "Perfect! I'll get that added for you.",
+            "Excellent choice! Adding that to your cart now.",
+            "Sounds great! Let me add that item for you.",
+            "Absolutely! I'll add that to your order."
+        ],
+        'lookup_add_item_to_cart': [
+            "Let me look that up and add it to your order!",
+            "Perfect! I'll find that item and add it for you.",
+            "Great choice! Let me add that to your cart.",
+            "Excellent! I'll get that item added right away.",
+            "Sounds delicious! Adding that to your order now."
+        ],
+        'confirm_add_item': [
+            "Perfect! I'll add that to your order.",
+            "Excellent choice! Adding that item now.",
+            "Great! Let me add that to your cart.",
+            "Sounds good! I'll get that added for you.",
+            "Absolutely! Adding that to your order."
+        ],
+        'update_item_size': [
+            "Let me update the size for you!",
+            "Perfect! I'll change that size right away.",
+            "Great! Updating the size now.",
+            "Excellent! Let me adjust that size for you.",
+            "Sounds good! I'll update that size."
+        ],
+        'update_item_sauce': [
+            "Let me add that sauce for you!",
+            "Perfect! I'll update the sauce selection.",
+            "Great choice! Adding that sauce now.",
+            "Excellent! Let me add that sauce for you.",
+            "Sounds delicious! I'll update the sauce."
+        ],
+        'update_item_toppings': [
+            "Let me add those toppings for you!",
+            "Perfect! I'll update the toppings now.",
+            "Great choice! Adding those toppings.",
+            "Excellent! Let me add those for you.",
+            "Sounds good! I'll update the toppings."
+        ],
+        'get_cart_summary': [
+            "Let me review your order for you!",
+            "Perfect! I'll go through your order now.",
+            "Great! Let me check what you have so far.",
+            "Excellent! I'll summarize your order.",
+            "Sounds good! Let me review your cart."
+        ],
+        'calculate_order_total': [
+            "Let me calculate your total!",
+            "Perfect! I'll add up your order now.",
+            "Great! Let me figure out the total.",
+            "Excellent! I'll calculate that for you.",
+            "Sounds good! Let me get your total."
+        ],
+        'finalize_order': [
+            "Let me finalize your order!",
+            "Perfect! I'll complete your order now.",
+            "Great! Let me finish this up for you.",
+            "Excellent! I'll finalize everything.",
+            "Sounds good! Let me complete your order."
+        ]
+    }
+    
+    # Get random message for the tool
+    tool_messages = messages.get(tool_name, ["Let me handle that for you!"])
+    import random
+    return random.choice(tool_messages)
 
 def create_tts_with_fallback():
     """Create TTS with robust fallback mechanism"""
