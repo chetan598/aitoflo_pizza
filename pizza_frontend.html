@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pizza Ordering Agent - FastAPI Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+        
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            padding: 30px;
+        }
+        
+        .section {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 25px;
+            border: 1px solid #e9ecef;
+        }
+        
+        .section h2 {
+            color: #2c3e50;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            border-bottom: 2px solid #ff6b6b;
+            padding-bottom: 10px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+        
+        input, select, textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #ff6b6b;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+            width: 100%;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+        }
+        
+        button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .results {
+            background: white;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .chat-container {
+            height: 400px;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 15px;
+            background: white;
+            overflow-y: auto;
+            margin-bottom: 15px;
+        }
+        
+        .chat-message {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 8px;
+        }
+        
+        .user-message {
+            background: #e3f2fd;
+            margin-left: 20px;
+        }
+        
+        .bot-message {
+            background: #f1f8e9;
+            margin-right: 20px;
+        }
+        
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+        
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🍕 Pizza Ordering Agent</h1>
+            <p>FastAPI-powered AI pizza ordering system</p>
+        </div>
+        
+        <div class="main-content">
+            <!-- Menu Search Section -->
+            <div class="section">
+                <h2>🔍 Menu Search</h2>
+                <div class="form-group">
+                    <label for="searchQuery">Search for items:</label>
+                    <input type="text" id="searchQuery" placeholder="e.g., margherita, pepperoni, veggie">
+                </div>
+                <button onclick="searchMenu()">Search Menu</button>
+                <div id="searchResults" class="results" style="display: none;"></div>
+            </div>
+            
+            <!-- Order Management Section -->
+            <div class="section">
+                <h2>🛒 Order Management</h2>
+                <div class="form-group">
+                    <label for="itemId">Item ID:</label>
+                    <input type="text" id="itemId" placeholder="Enter item ID from search results">
+                </div>
+                <div class="form-group">
+                    <label for="quantity">Quantity:</label>
+                    <input type="number" id="quantity" value="1" min="1">
+                </div>
+                <div class="form-group">
+                    <label for="customizations">Customizations (comma-separated):</label>
+                    <input type="text" id="customizations" placeholder="e.g., extra cheese, pepperoni">
+                </div>
+                <button onclick="addToCart()">Add to Cart</button>
+                <button onclick="getCart()">View Cart</button>
+                <button onclick="clearCart()">Clear Cart</button>
+                <div id="orderResults" class="results" style="display: none;"></div>
+            </div>
+            
+            <!-- Customer Info Section -->
+            <div class="section">
+                <h2>👤 Customer Information</h2>
+                <div class="form-group">
+                    <label for="customerName">Name:</label>
+                    <input type="text" id="customerName" placeholder="Your full name">
+                </div>
+                <div class="form-group">
+                    <label for="customerPhone">Phone:</label>
+                    <input type="tel" id="customerPhone" placeholder="Your phone number">
+                </div>
+                <div class="form-group">
+                    <label for="customerAddress">Address:</label>
+                    <textarea id="customerAddress" placeholder="Your delivery address"></textarea>
+                </div>
+                <button onclick="updateCustomerInfo()">Update Info</button>
+                <div id="customerResults" class="results" style="display: none;"></div>
+            </div>
+            
+            <!-- Chat Section -->
+            <div class="section">
+                <h2>💬 AI Chat</h2>
+                <div id="chatContainer" class="chat-container"></div>
+                <div class="form-group">
+                    <input type="text" id="chatInput" placeholder="Type your message..." onkeypress="handleChatKeyPress(event)">
+                </div>
+                <button onclick="sendChatMessage()">Send Message</button>
+                <button onclick="connectWebSocket()">Connect WebSocket</button>
+                <div id="chatStatus" class="status info" style="display: none;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        let sessionId = null;
+        let websocket = null;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            showStatus('info', 'Ready to use! Start by searching the menu or connecting to chat.');
+        });
+
+        // Status display
+        function showStatus(type, message) {
+            const statusDiv = document.getElementById('chatStatus');
+            statusDiv.className = `status ${type}`;
+            statusDiv.textContent = message;
+            statusDiv.style.display = 'block';
+            setTimeout(() => {
+                statusDiv.style.display = 'none';
+            }, 5000);
+        }
+
+        // Menu search
+        async function searchMenu() {
+            const query = document.getElementById('searchQuery').value;
+            if (!query) {
+                showStatus('error', 'Please enter a search query');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/menu/search`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        query: query,
+                        limit: 5
+                    })
+                });
+
+                const data = await response.json();
+                displaySearchResults(data);
+                showStatus('success', `Found ${data.total_found} items`);
+            } catch (error) {
+                showStatus('error', `Search failed: ${error.message}`);
+            }
+        }
+
+        function displaySearchResults(data) {
+            const resultsDiv = document.getElementById('searchResults');
+            resultsDiv.style.display = 'block';
+            
+            let html = '<h3>Search Results:</h3>';
+            data.items.forEach((item, index) => {
+                html += `
+                    <div style="border: 1px solid #ddd; padding: 10px; margin: 5px 0; border-radius: 5px;">
+                        <strong>${item.name || item.short_name}</strong><br>
+                        <small>ID: ${item.id} | Price: $${item.price}</small><br>
+                        <button onclick="selectItem('${item.id}')" style="margin-top: 5px; padding: 5px 10px; font-size: 12px;">Select</button>
+                    </div>
+                `;
+            });
+            
+            resultsDiv.innerHTML = html;
+        }
+
+        function selectItem(itemId) {
+            document.getElementById('itemId').value = itemId;
+            showStatus('success', 'Item selected! You can now add it to cart.');
+        }
+
+        // Order management
+        async function addToCart() {
+            const itemId = document.getElementById('itemId').value;
+            const quantity = parseInt(document.getElementById('quantity').value);
+            const customizations = document.getElementById('customizations').value.split(',').map(s => s.trim()).filter(s => s);
+
+            if (!itemId) {
+                showStatus('error', 'Please select an item first');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/order/add-item`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        item_id: itemId,
+                        quantity: quantity,
+                        customizations: customizations
+                    })
+                });
+
+                const data = await response.json();
+                displayOrderResults(data);
+                showStatus('success', data.message);
+            } catch (error) {
+                showStatus('error', `Add to cart failed: ${error.message}`);
+            }
+        }
+
+        async function getCart() {
+            try {
+                const response = await fetch(`${API_BASE}/order/cart`);
+                const data = await response.json();
+                displayOrderResults(data);
+            } catch (error) {
+                showStatus('error', `Get cart failed: ${error.message}`);
+            }
+        }
+
+        async function clearCart() {
+            try {
+                const response = await fetch(`${API_BASE}/order/clear`, {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+                displayOrderResults(data);
+                showStatus('success', data.message);
+            } catch (error) {
+                showStatus('error', `Clear cart failed: ${error.message}`);
+            }
+        }
+
+        function displayOrderResults(data) {
+            const resultsDiv = document.getElementById('orderResults');
+            resultsDiv.style.display = 'block';
+            
+            if (data.cart_items) {
+                let html = '<h3>Cart Contents:</h3>';
+                data.cart_items.forEach(item => {
+                    html += `
+                        <div style="border: 1px solid #ddd; padding: 10px; margin: 5px 0; border-radius: 5px;">
+                            <strong>${item.itemName}</strong><br>
+                            <small>Qty: ${item.quantity} | Price: $${item.itemPrice} each</small>
+                        </div>
+                    `;
+                });
+                html += `<strong>Total: $${data.total.toFixed(2)}</strong>`;
+                resultsDiv.innerHTML = html;
+            } else {
+                resultsDiv.innerHTML = `<p>${data.message}</p>`;
+            }
+        }
+
+        // Customer info
+        async function updateCustomerInfo() {
+            const name = document.getElementById('customerName').value;
+            const phone = document.getElementById('customerPhone').value;
+            const address = document.getElementById('customerAddress').value;
+
+            if (!name) {
+                showStatus('error', 'Name is required');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/customer/info`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        name: name,
+                        phone: phone,
+                        address: address
+                    })
+                });
+
+                const data = await response.json();
+                displayCustomerResults(data);
+                showStatus('success', data.message);
+            } catch (error) {
+                showStatus('error', `Update customer info failed: ${error.message}`);
+            }
+        }
+
+        function displayCustomerResults(data) {
+            const resultsDiv = document.getElementById('customerResults');
+            resultsDiv.style.display = 'block';
+            resultsDiv.innerHTML = `
+                <h3>Customer Information:</h3>
+                <p><strong>Name:</strong> ${data.customer_info.name}</p>
+                <p><strong>Phone:</strong> ${data.customer_info.phone || 'Not provided'}</p>
+                <p><strong>Address:</strong> ${data.customer_info.address || 'Not provided'}</p>
+            `;
+        }
+
+        // Chat functionality
+        function addChatMessage(message, isUser = true) {
+            const chatContainer = document.getElementById('chatContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `chat-message ${isUser ? 'user-message' : 'bot-message'}`;
+            messageDiv.textContent = message;
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        async function sendChatMessage() {
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            
+            if (!message) return;
+
+            addChatMessage(message, true);
+            input.value = '';
+
+            try {
+                const response = await fetch(`${API_BASE}/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        session_id: sessionId
+                    })
+                });
+
+                const data = await response.json();
+                addChatMessage(data.response, false);
+                
+                if (data.session_id) {
+                    sessionId = data.session_id;
+                }
+            } catch (error) {
+                addChatMessage(`Error: ${error.message}`, false);
+            }
+        }
+
+        function handleChatKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendChatMessage();
+            }
+        }
+
+        // WebSocket functionality
+        function connectWebSocket() {
+            if (websocket) {
+                websocket.close();
+            }
+
+            const wsSessionId = sessionId || 'demo_session_' + Math.random().toString(36).substr(2, 9);
+            websocket = new WebSocket(`ws://localhost:8000/ws/${wsSessionId}`);
+
+            websocket.onopen = function() {
+                showStatus('success', 'WebSocket connected!');
+                addChatMessage('Connected to real-time chat', false);
+            };
+
+            websocket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                addChatMessage(data.content, false);
+            };
+
+            websocket.onclose = function() {
+                showStatus('info', 'WebSocket disconnected');
+            };
+
+            websocket.onerror = function(error) {
+                showStatus('error', 'WebSocket error: ' + error.message);
+            };
+        }
+
+        // Send WebSocket message
+        function sendWebSocketMessage() {
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            
+            if (!message || !websocket) return;
+
+            addChatMessage(message, true);
+            input.value = '';
+
+            websocket.send(JSON.stringify({
+                message: message
+            }));
+        }
+    </script>
+</body>
+</html>
