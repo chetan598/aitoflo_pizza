@@ -27,10 +27,8 @@ class RemoveItemRequest(BaseModel):
 class CustomerInfoRequest(BaseModel):
     name: str = Field(..., description="Customer name")
     phone: Optional[str] = Field(None, description="Customer phone number")
-    address: Optional[str] = Field(None, description="Customer address")
 
 class OrderCompletionRequest(BaseModel):
-    payment_method: str = Field(..., description="Payment method")
     special_instructions: Optional[str] = Field(None, description="Special instructions")
 
 class ChatMessage(BaseModel):
@@ -58,10 +56,8 @@ class OrderSummaryResponse(BaseModel):
     order_id: str
     customer_name: str
     customer_phone: Optional[str]
-    customer_address: Optional[str]
     items: List[CartItemResponse]
     total: float
-    payment_method: str
     special_instructions: Optional[str]
     timestamp: str
 
@@ -77,7 +73,6 @@ class HealthResponse(BaseModel):
 class CustomerInfoResponse(BaseModel):
     name: str
     phone: Optional[str]
-    address: Optional[str]
 
 # WebSocket Models
 class WebSocketMessage(BaseModel):

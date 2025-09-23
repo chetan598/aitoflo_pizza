@@ -1,0 +1,175 @@
+PIZZA ORDERING API - ENDPOINTS DOCUMENTATION
+
+ENDPOINT 1: GET /health
+Description: Health check endpoint
+Parameters: None
+Response:
+{
+  "status": "healthy",
+  "timestamp": "2024-01-01T00:00:00"
+}
+
+ENDPOINT 2: GET /menu
+Description: Get the complete menu
+Parameters: None
+Response:
+{
+  "menu": [...],
+  "summary": "..."
+}
+
+ENDPOINT 3: GET /menu/categories
+Description: Get all menu categories
+Parameters: None
+Response:
+{
+  "categories": [...]
+}
+
+ENDPOINT 4: POST /menu/search
+Description: Search menu items with fuzzy matching
+Request Body:
+{
+  "query": "pizza margherita",
+  "limit": 5,
+  "min_score": 0.3
+}
+Response:
+{
+  "items": [...],
+  "total_found": 0
+}
+
+ENDPOINT 5: GET /menu/item/{item_id}
+Description: Get detailed information about a specific menu item
+Path Parameters:
+- item_id: string (required) - ID of the menu item
+Response:
+{
+  "item": {...}
+}
+
+ENDPOINT 6: POST /order/add-item
+Description: Add an item to the order
+Request Body:
+{
+  "item_id": "pizza-001",
+  "size": "large",
+  "quantity": 2,
+  "customizations": ["extra cheese", "no onions"]
+}
+Response:
+{
+  "message": "...",
+  "cart_item": {
+    "itemId": "string",
+    "itemName": "string",
+    "itemPrice": "number",
+    "quantity": "integer",
+    "customizations": "array"
+  },
+  "cart_summary": "..."
+}
+
+ENDPOINT 7: PUT /order/update-quantity
+Description: Update quantity of an item in the order
+Request Body:
+{
+  "item_name": "Margherita Pizza",
+  "quantity": 3
+}
+Response:
+{
+  "message": "...",
+  "cart_summary": "..."
+}
+
+ENDPOINT 8: DELETE /order/remove-item
+Description: Remove an item from the order
+Request Body:
+{
+  "item_name": "Margherita Pizza"
+}
+Response:
+{
+  "message": "...",
+  "cart_summary": "..."
+}
+
+ENDPOINT 9: GET /order/cart
+Description: Get current cart contents
+Query Parameters:
+- session_id: string (optional) - Session ID
+Example URL: GET /order/cart?session_id=abc123
+Response:
+{
+  "cart_items": [
+    {
+      "itemId": "pizza-001",
+      "itemName": "Margherita Pizza",
+      "itemPrice": 12.99,
+      "quantity": 2,
+      "customizations": ["extra cheese", "no onions"]
+    }
+  ],
+  "total": 25.98,
+  "cart_summary": "2 items in cart, total: $25.98"
+}
+
+ENDPOINT 10: DELETE /order/clear
+Description: Clear the entire cart
+Query Parameters:
+- session_id: string (optional) - Session ID
+Example URL: DELETE /order/clear?session_id=abc123
+Response:
+{
+  "message": "Cart cleared successfully"
+}
+
+ENDPOINT 11: POST /customer/info
+Description: Update customer information
+Request Body:
+{
+  "name": "John Doe",
+  "phone": "+1234567890"
+}
+Response:
+{
+  "message": "Customer information updated successfully",
+  "customer_info": {
+    "name": "John Doe",
+    "phone": "+1234567890"
+  }
+}
+
+ENDPOINT 12: POST /order/complete
+Description: Complete the order
+Request Body:
+{
+  "special_instructions": "Please ring the doorbell twice"
+}
+Response:
+{
+  "message": "Order completed successfully",
+  "order_summary": {
+    "order_id": "ord_123456789",
+    "customer_name": "John Doe",
+    "customer_phone": "+1234567890",
+    "items": [
+      {
+        "itemId": "pizza-001",
+        "itemName": "Margherita Pizza",
+        "itemPrice": 12.99,
+        "quantity": 2,
+        "customizations": ["extra cheese", "no onions"]
+      }
+    ],
+    "total": 25.98,
+    "special_instructions": "Please ring the doorbell twice",
+    "timestamp": "2024-01-01T12:00:00Z"
+  }
+}
+
+BASE URL: http://localhost:8000
+DOCUMENTATION: http://localhost:8000/docs
+ALTERNATIVE DOCS: http://localhost:8000/redoc

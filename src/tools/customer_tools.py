@@ -12,7 +12,7 @@ class CustomerTools:
         self.session = session
     
     @function_tool
-    async def manage_customer_info(self, action: str, name: str = "", phone: str = "", address: str = "") -> str:
+    async def manage_customer_info(self, action: str, name: str = "", phone: str = "") -> str:
         """
         Comprehensive customer information management tool.
         Actions: 'set_name', 'get_name', 'set_contact', 'get_contact_info'
@@ -35,8 +35,6 @@ class CustomerTools:
                 return "What phone number should I use for your order?"
             
             self.session.customer_phone = phone
-            if address:
-                self.session.customer_address = address
             
             return f"Got it! I'll use {phone} for your order. Is there anything else you'd like to add?"
         
@@ -46,8 +44,6 @@ class CustomerTools:
                 info.append(f"Name: {self.session.customer_name}")
             if self.session.customer_phone:
                 info.append(f"Phone: {self.session.customer_phone}")
-            if self.session.customer_address:
-                info.append(f"Address: {self.session.customer_address}")
             
             if info:
                 return "Your contact information:\n" + "\n".join(info)

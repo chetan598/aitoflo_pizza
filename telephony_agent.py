@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Any
 from enum import Enum
 from dotenv import load_dotenv
 from livekit.agents import (
-    Agent, AgentSession, JobContext, WorkerOptions, cli, function_tool
+    Agent, AgentSession, JobContext, WorkerOptions, cli, function_tool, RunContext
 )
 from livekit.plugins import deepgram, openai, silero, elevenlabs
 
@@ -1389,9 +1389,19 @@ def parse_item_specifications(item_name: str) -> dict:
     return specifications
 
 @function_tool
-async def lookup_add_item_to_cart(item_name: str, quantity: int = 1) -> str:
+async def lookup_add_item_to_cart(item_name: str, quantity: int = 1, ctx: RunContext = None) -> str:
     """Look up an item by name and add it to the cart with all customizations in one step"""
     global current_item_customizing, current_state, current_size_selection
+    
+    # Generate and speak dynamic message immediately when tool starts (don't wait)
+    if ctx:
+        try:
+            dynamic_message = get_dynamic_tool_message('lookup_add_item_to_cart', item_name=item_name, quantity=quantity)
+            # Speak immediately but don't wait for completion - let tool execute in parallel
+            asyncio.create_task(ctx.session.say(dynamic_message))
+        except Exception as e:
+            logger.warning(f"Failed to speak dynamic message: {e}")
+            # Continue with tool execution even if speech fails
     
     # Parse all customizations from the item name
     specifications = parse_item_specifications(item_name)
@@ -1642,23 +1652,12 @@ async def add_sauce(item_id: int, sauce_name: str) -> str:
         
         # First validate that the item exists in the menu
         item_dict = get_menu_item_by_id(int(item_id))
-        print(f"🔍 DEBUG: get_menu_item_by_id({item_id}) returned: {item_dict is not None}")
-        
         if not item_dict:
-            print(f"🔍 DEBUG: Item {item_id} not found in menu, but attempting to add sauce anyway")
-            # We'll continue with the process and let the validation happen later
-        else:
-            print(f"🔍 DEBUG: Item name: {item_dict.get('name', 'Unknown')}")
-            print(f"🔍 DEBUG: Has customization: {bool(item_dict.get('customization'))}")
-            if item_dict.get('customization'):
-                print(f"🔍 DEBUG: Customization keys: {list(item_dict['customization'].keys())}")
+            return f"Sorry, I couldn't find that item in our menu. Please try adding a valid item first."
         
         # Check if the item actually has sauce customizations available
-        if item_dict and (not item_dict.get("customization") or not item_dict.get("customization", {}).get("Sauce")):
-            return f"Sorry, {item_dict.get('name', 'this item')} doesn't have sauce options available."
-        elif not item_dict:
-            # If item not found in menu, we'll add the sauce with a default price
-            print(f"🔍 DEBUG: Item not in menu, adding sauce with default price")
+        if not item_dict or not item_dict.get("customization", {}).get("Sauce"):
+            return f"Sorry, {item_dict.get('name', 'this item') if item_dict else 'this item'} doesn't have sauce options available."
         
         # Find the item in cart - prioritize exact item_id match
         target_item = None
@@ -1710,17 +1709,13 @@ async def add_sauce(item_id: int, sauce_name: str) -> str:
                     sauce_name = sauce.get('name', '')
                     sauce_names.append(sauce_name)
                     sauce_names_lower.append(sauce_name.lower())
-                else:
+        else:
                     sauce_name = str(sauce)
                     sauce_names.append(sauce_name)
                     sauce_names_lower.append(sauce_name.lower())
-            
-            if normalized_sauce not in sauce_names_lower:
+        
+        if normalized_sauce not in sauce_names_lower:
                 return f"Sorry, '{sauce_name}' is not available for this item. Available sauces are: {', '.join(sauce_names)}"
-        elif not item_dict:
-            # If item not found in menu, allow any sauce with default price
-            print(f"🔍 DEBUG: Item not in menu, allowing any sauce with default price")
-            available_sauces = []  # Empty list means we'll allow any sauce
         else:
             return f"Sorry, this item doesn't have sauce options. This item has toppings instead. Would you like to add toppings instead?"
         
@@ -1863,100 +1858,6 @@ async def add_sauce_to_wings_simple(sauce_name: str) -> str:
     return await add_sauce(wings_item_id, sauce_name)
 
 @function_tool
-async def add_sauce_to_celery(sauce_name: str) -> str:
-    """Add sauce to celery - automatically finds celery in cart"""
-    global current_item_customizing, current_state
-    if not user_cart:
-        return "I don't see any items in your cart to customize. Would you like to add something first?"
-    
-    print(f"🔍 DEBUG: add_sauce_to_celery called with sauce: '{sauce_name}'")
-    print(f"🔍 DEBUG: Current cart has {len(user_cart)} items")
-    
-    # Find celery item in cart
-    celery_item = None
-    celery_item_id = None
-    for i, item in enumerate(user_cart):
-        if not item or not isinstance(item, dict):
-            continue
-        print(f"🔍 DEBUG: Checking item {i}: {item.get('itemName', 'Unknown')} (ID: {item.get('itemId', 'Unknown')})")
-        # Check if this is a celery item (has "celery" in name or is itemId 4)
-        if (item.get("itemName", "").lower().find("celery") != -1 or 
-            item.get("itemId") == 4):
-            celery_item = item
-            celery_item_id = item.get("itemId")
-            print(f"🔍 DEBUG: Found celery item: {celery_item.get('itemName')} (ID: {celery_item_id})")
-            break
-    
-    if not celery_item:
-        print("🔍 DEBUG: No celery item found in cart")
-        return "I don't see any celery in your cart to add sauce to. Please add celery first."
-    
-    print(f"🔍 DEBUG: Calling add_sauce with item_id={celery_item_id}, sauce_name='{sauce_name}'")
-    # Use the existing add_sauce function with the found celery item ID
-    return await add_sauce(celery_item_id, sauce_name)
-
-@function_tool
-async def add_sauce_to_mushrooms(sauce_name: str) -> str:
-    """Add sauce to fried mushrooms - automatically finds mushrooms in cart"""
-    global current_item_customizing, current_state
-    if not user_cart:
-        return "I don't see any items in your cart to customize. Would you like to add something first?"
-    
-    print(f"🔍 DEBUG: add_sauce_to_mushrooms called with sauce: '{sauce_name}'")
-    print(f"🔍 DEBUG: Current cart has {len(user_cart)} items")
-    
-    # Find mushrooms item in cart
-    mushrooms_item = None
-    mushrooms_item_id = None
-    for i, item in enumerate(user_cart):
-        if not item or not isinstance(item, dict):
-            continue
-        print(f"🔍 DEBUG: Checking item {i}: {item.get('itemName', 'Unknown')} (ID: {item.get('itemId', 'Unknown')})")
-        # Check if this is a mushrooms item (has "mushroom" in name or is itemId 9)
-        if (item.get("itemName", "").lower().find("mushroom") != -1 or 
-            item.get("itemId") == 9):
-            mushrooms_item = item
-            mushrooms_item_id = item.get("itemId")
-            print(f"🔍 DEBUG: Found mushrooms item: {mushrooms_item.get('itemName')} (ID: {mushrooms_item_id})")
-            break
-    
-    if not mushrooms_item:
-        print("🔍 DEBUG: No mushrooms item found in cart")
-        return "I don't see any fried mushrooms in your cart to add sauce to. Please add fried mushrooms first."
-    
-    print(f"🔍 DEBUG: Calling add_sauce with item_id={mushrooms_item_id}, sauce_name='{sauce_name}'")
-    # Use the existing add_sauce function with the found mushrooms item ID
-    return await add_sauce(mushrooms_item_id, sauce_name)
-
-@function_tool
-async def add_ranch_sauce() -> str:
-    """Add ranch sauce to celery or mushrooms - simple function for common request"""
-    # Try celery first, then mushrooms
-    celery_result = await add_sauce_to_celery("ranch")
-    if "don't see any celery" not in celery_result.lower():
-        return celery_result
-    
-    mushrooms_result = await add_sauce_to_mushrooms("ranch")
-    if "don't see any" not in mushrooms_result.lower():
-        return mushrooms_result
-    
-    return "I don't see any celery or fried mushrooms in your cart to add ranch sauce to. Please add one of these items first."
-
-@function_tool
-async def add_blue_cheese_sauce() -> str:
-    """Add blue cheese sauce to celery or mushrooms - simple function for common request"""
-    # Try celery first, then mushrooms
-    celery_result = await add_sauce_to_celery("blue cheese")
-    if "don't see any celery" not in celery_result.lower():
-        return celery_result
-    
-    mushrooms_result = await add_sauce_to_mushrooms("blue cheese")
-    if "don't see any" not in mushrooms_result.lower():
-        return mushrooms_result
-    
-    return "I don't see any celery or fried mushrooms in your cart to add blue cheese sauce to. Please add one of these items first."
-
-@function_tool
 async def add_topping_to_pizza(topping_name: str, quantity: int = 1) -> str:
     """Add topping to pizza - automatically finds pizza in cart"""
     global current_item_customizing, current_state
@@ -1973,10 +1874,9 @@ async def add_topping_to_pizza(topping_name: str, quantity: int = 1) -> str:
         if not item or not isinstance(item, dict):
             continue
         print(f"🔍 DEBUG: Checking item {i}: {item.get('itemName', 'Unknown')} (ID: {item.get('itemId', 'Unknown')})")
-        # Check if this is a pizza item (has "pizza" in name or is any pizza itemId with toppings)
-        # Pizza items with toppings: 2 (12 Inch), 3 (Personal), 40 (Build Your Own Personal), 41 (Build Your Own 12 Inch), 42 (Build Your Own Half Sheet)
+        # Check if this is a pizza item (has "pizza" in name or is itemId 2)
         if (item.get("itemName", "").lower().find("pizza") != -1 or 
-            item.get("itemId") in [2, 3, 40, 41, 42]):
+            item.get("itemId") == 2):
             pizza_item = item
             pizza_item_id = item.get("itemId")
             print(f"🔍 DEBUG: Found pizza item: {pizza_item.get('itemName')} (ID: {pizza_item_id})")
@@ -2294,9 +2194,19 @@ async def update_item_customization(item_name: str, customization_type: str, old
     return f"I couldn't find {item_name} in your order. Could you please check the item name?"
 
 @function_tool
-async def add_item_basic(item_name: str, quantity: int = 1) -> str:
+async def add_item_basic(item_name: str, quantity: int = 1, ctx: RunContext = None) -> str:
     """Add item to cart directly - no confirmation needed to avoid repeated questions"""
     global user_cart, current_item_customizing, customization_step, session_id
+    
+    # Generate and speak dynamic message immediately when tool starts (don't wait)
+    if ctx:
+        try:
+            dynamic_message = get_dynamic_tool_message('add_item_basic', item_name=item_name, quantity=quantity)
+            # Speak immediately but don't wait for completion - let tool execute in parallel
+            asyncio.create_task(ctx.session.say(dynamic_message))
+        except Exception as e:
+            logger.warning(f"Failed to speak dynamic message: {e}")
+            # Continue with tool execution even if speech fails
     
     # Safely convert input to string
     item_name = safe_string_conversion(item_name, "add_item_basic")
@@ -2317,9 +2227,19 @@ async def add_item_basic(item_name: str, quantity: int = 1) -> str:
     return await confirm_add_item(item_name, quantity)
 
 @function_tool
-async def confirm_add_item(item_name: str, quantity: int = 1) -> str:
+async def confirm_add_item(item_name: str, quantity: int = 1, ctx: RunContext = None) -> str:
     """Add item to cart with duplicate prevention - no repeated confirmations"""
     global current_item_customizing, customization_step, session_id
+    
+    # Generate and speak dynamic message immediately when tool starts (don't wait)
+    if ctx:
+        try:
+            dynamic_message = get_dynamic_tool_message('confirm_add_item', item_name=item_name, quantity=quantity)
+            # Speak immediately but don't wait for completion - let tool execute in parallel
+            asyncio.create_task(ctx.session.say(dynamic_message))
+        except Exception as e:
+            logger.warning(f"Failed to speak dynamic message: {e}")
+            # Continue with tool execution even if speech fails
     
     # Find item by name
     item = get_menu_item_by_name(item_name)
@@ -2401,9 +2321,19 @@ async def confirm_add_item(item_name: str, quantity: int = 1) -> str:
             return f"Excellent! I've added ({item.get('name')}, {item.get('id')}) to your cart for {format_price_for_speech(total)}. What else would you like to order?"
 
 @function_tool
-async def update_item_size(size_name: str) -> str:
+async def update_item_size(size_name: str, ctx: RunContext = None) -> str:
     """Step 2: Update the current item with selected size using (name, id) references"""
     global user_cart, current_item_customizing, customization_step
+    
+    # Generate and speak dynamic message immediately when tool starts (don't wait)
+    if ctx:
+        try:
+            dynamic_message = get_dynamic_tool_message('update_item_size', size_name=size_name)
+            # Speak immediately but don't wait for completion - let tool execute in parallel
+            asyncio.create_task(ctx.session.say(dynamic_message))
+        except Exception as e:
+            logger.warning(f"Failed to speak dynamic message: {e}")
+            # Continue with tool execution even if speech fails
     
     if not current_item_customizing:
         return "I don't see any item being customized. Please add an item first."
@@ -2448,9 +2378,19 @@ async def update_item_size(size_name: str) -> str:
     return "I couldn't find the item to update. Please try again."
 
 @function_tool
-async def update_item_sauce(sauce_name: str) -> str:
+async def update_item_sauce(sauce_name: str, ctx: RunContext = None) -> str:
     """Step 3: Update the current item with selected sauce using (name, id) references"""
     global user_cart, current_item_customizing, customization_step
+    
+    # Generate and speak dynamic message immediately when tool starts (don't wait)
+    if ctx:
+        try:
+            dynamic_message = get_dynamic_tool_message('update_item_sauce', sauce_name=sauce_name)
+            # Speak immediately but don't wait for completion - let tool execute in parallel
+            asyncio.create_task(ctx.session.say(dynamic_message))
+        except Exception as e:
+            logger.warning(f"Failed to speak dynamic message: {e}")
+            # Continue with tool execution even if speech fails
     
     # Safely convert input to string
     sauce_name = safe_string_conversion(sauce_name, "update_item_sauce")
@@ -2516,9 +2456,19 @@ async def update_item_sauce(sauce_name: str) -> str:
     return "I couldn't find the item to update. Please try again."
 
 @function_tool
-async def update_item_toppings(topping_name: str) -> str:
+async def update_item_toppings(topping_name: str, ctx: RunContext = None) -> str:
     """Step 3: Update the current item with selected toppings using (name, id) references"""
     global user_cart, current_item_customizing, customization_step
+    
+    # Generate and speak dynamic message immediately when tool starts (don't wait)
+    if ctx:
+        try:
+            dynamic_message = get_dynamic_tool_message('update_item_toppings', topping_name=topping_name)
+            # Speak immediately but don't wait for completion - let tool execute in parallel
+            asyncio.create_task(ctx.session.say(dynamic_message))
+        except Exception as e:
+            logger.warning(f"Failed to speak dynamic message: {e}")
+            # Continue with tool execution even if speech fails
     
     # Safely convert input to string
     topping_name = safe_string_conversion(topping_name, "update_item_toppings")
@@ -2577,8 +2527,18 @@ async def update_item_toppings(topping_name: str) -> str:
     return "I couldn't find the item to update. Please try again."
 
 @function_tool
-async def get_cart_summary() -> str:
+async def get_cart_summary(ctx: RunContext = None) -> str:
     """Get a summary of the current cart using (name, id) references"""
+    # Generate and speak dynamic message immediately when tool starts (don't wait)
+    if ctx:
+        try:
+            dynamic_message = get_dynamic_tool_message('get_cart_summary')
+            # Speak immediately but don't wait for completion - let tool execute in parallel
+            asyncio.create_task(ctx.session.say(dynamic_message))
+        except Exception as e:
+            logger.warning(f"Failed to speak dynamic message: {e}")
+            # Continue with tool execution even if speech fails
+    
     if not user_cart:
         return "Your cart is empty. What would you like to order?"
     
@@ -2728,7 +2688,6 @@ async def calculate_order_total() -> str:
         item_name = item.get("itemName", "Unknown Item")
         quantity = item.get("quantity", 1)
         size = item.get("selectedSize", "")
-        customizations = item.get("customizations", [])
         
         item_desc = f"{quantity}x {item_name}"
         if size:
@@ -2797,14 +2756,8 @@ async def finalize_order_with_name() -> str:
         # Clear the cart and reset state
         user_cart.clear()
         customer_name = None
-        # Schedule call termination after final greeting
-        import asyncio
-        asyncio.create_task(_terminate_call_after_delay())
         return f"Perfect! Your order has been placed successfully, {final_customer_name}. Thank you for choosing Jimmy Neno's Pizza! Have a great day and goodbye!"
     else:
-        # Schedule call termination even for failed orders
-        import asyncio
-        asyncio.create_task(_terminate_call_after_delay())
         return f"I apologize, {final_customer_name}, but there was an issue placing your order. Please call us directly at the restaurant. Thank you and goodbye!"
 
 @function_tool
@@ -3806,15 +3759,11 @@ async def finalize_order(customer_name: str) -> str:
     if success:
         # Clear the cart after successful order
         user_cart.clear()
-        # Schedule call termination after final greeting
-        import asyncio
-        asyncio.create_task(_terminate_call_after_delay())
-        return f"Perfect! Thank you, {customer_name}! Your order is confirmed. Order ID: {order_data.get('id', 'Unknown')}. Total: ${total:.2f}. We'll have your meal ready soon. Thank you for choosing Jimmy Neno's Pizza! Have a great day and goodbye!"
+        # Don't schedule termination immediately - let the user respond first
+        return f"Perfect! Thank you, {customer_name}! Your order is confirmed. Order ID: {order_data.get('id', 'Unknown')}. Total: ${total:.2f}. We'll have your meal ready soon. Thank you for choosing Jimmy Neno's Pizza! Is there anything else I can help you with?"
     else:
-        # Schedule call termination even for failed orders
-        import asyncio
-        asyncio.create_task(_terminate_call_after_delay())
-        return f"Thank you, {customer_name}! Your order is confirmed locally. Total: ${total:.2f}. We have your order details and will process it. Thank you for choosing Jimmy Neno's Pizza! Have a great day and goodbye!"
+        # Don't schedule termination immediately - let the user respond first
+        return f"Thank you, {customer_name}! Your order is confirmed locally. Total: ${total:.2f}. We have your order details and will process it. Thank you for choosing Jimmy Neno's Pizza! Is there anything else I can help you with?"
 
 @function_tool
 async def end_call() -> str:
@@ -3884,10 +3833,7 @@ def get_instructions() -> str:
     else:
         catalog_text = "Menu Catalog: Loading menu from API..."
     
-    professional_prompt = """
-{
-  "general_prompt": "### 1. Your Persona: Sofia, The Voice of Jimmy Neno's Pizza\n\n*Role: You are Sofia. You are not a program; you are the friendly, warm, and remarkably helpful voice of the restaurant. The customer is a person, not a user. Your goal is a conversation so natural they forget they're talking to an AI.\n\nPersonality: You are cheerful, calm, and conversational. You're not just an order-taker; you're a helpful guide. You use light, friendly language to make people feel welcome.\n\nVocal Style: Your tone is a smile. You use natural-sounding affirmations and vary them constantly. Instead of just 'Okay,' you say, 'You got it,' 'Awesome choice,' 'Sounds delicious,' or 'Alrighty then!'. You are an active listener, using small interjections like 'Mhm...' and 'Got it...' to show you're engaged.\n\n### 2. Your Core Mindset: How You Think\n\nThe First Principle: Listen and Deconstruct.* This is your most important skill. You must listen to the customer's entire sentence without interrupting. Your first job is to deconstruct their phrase, identifying the core item and *any customizations they provided at the same time. \n   *Example: If a customer says, \"I'll get a 24 count of BBQ wings,\" your brain immediately understands: \n    *   Item: Wings\n    *   Quantity: 24\n    *   Sauce: BBQ\n    You will NOT ask them for the sauce again. You will intelligently move to the *next logical question.\n\n*The Second Principle: One *Missing Question at a Time.** After you deconstruct what they've said, you only ask for the very next piece of information you need. Your goal is to never ask a question the customer has already answered.\n\n*The Third Principle: No Intermediate Summaries.* You are confident and a great listener. Do NOT read back an item's details right after adding them. The only time you summarize the order is at the very end of the call. This is crucial for a smooth, fast-paced conversation.\n\n### 3. Example of Your Desired Behavior\n\n*Scenario: Customer wants wings.\n\nCustomer: \"Hey, can I get an order of 24 BBQ wings?\"\n\nYour Thought Process: \n1.  Item: wings. Quantity: 24. Sauce: BBQ.\n2.  Okay, I have the main item and a key customization (the sauce).\n3.  The next logical question for wings is about sides like ranch or celery.\n\nYour Response (Correct): \"24 BBQ wings, you got it! Sounds delicious. Did you want to add any celery or ranch with that today?\"\n\nYour Response (INCORRECT)*: \"Okay, 24 wings. And what sauce would you like on those?\""
-}"""
+    professional_prompt = """The Golden Rule: The Act-Then-Speak Principle\n\n**This is your single most important directive and it is non-negotiable.** You are not a conversationalist who uses tools; you are a tool-first agent that confirms actions with conversation. For every piece of information a customer gives you, you MUST first call the appropriate tool to process it. Only *after* that tool call is complete do you generate your friendly, conversational response. Acknowledge, ACT, then Speak.\n\n*   **Example (Incorrect Flow):** Customer says \"large pepperoni pizza\" -> You say \"Okay, a large pepperoni pizza!\" -> You (maybe) call the tools later.\n*   **Example (CORRECT Flow):** Customer says \"large pepperoni pizza\" -> You **IMMEDIATELY** call `lookup_add_item_to_cart(item_name='pizza')` AND `add_customization(customization={'size': 'large', 'add_toppings': ['pepperoni']})` -> **THEN** you say, \"Awesome choice! A large pepperoni pizza it is. What's next for you?\"\n\nThis principle is your entire world. Never break it.\n\n### 1. Your Persona: Sofia, The Restaurant's Best Employee\n\n*   **Role:** You are Sofia. You're not an AI; you are the warm, confident, and incredibly efficient voice of Jimmy Neno's Pizza. You make ordering feel like a pleasant chat with someone who knows the menu inside and out. The customer is your guest.\n\n*   **Personality:** You are effortlessly cheerful, calm, and proactive. You don't just take orders; you guide guests to great choices. You are an expert listener who makes people feel heard and valued.\n\n*   **Vocal Style:** Your tone is a smile. You use a rich variety of natural-sounding affirmations. **Never use the same affirmation (e.g., 'You got it') twice in a row.** Cycle through phrases like: 'Absolutely!', 'Sounds delicious!', 'Excellent choice!', 'I can definitely do that for you!', and 'Alrighty then!'. You are always engaged, using small interjections to show you're listening intently.\n\n### 2. Your Core Mindset: How You Think\n\n*   **The First Principle: Listen, Deconstruct, and ACT.** This is the practical application of the **Act-Then-Speak Principle**. When a customer speaks, you listen to their entire request without interruption. You instantly deconstruct their phrase into actionable components (item, size, sauce, toppings, quantity) and immediately execute the necessary tool calls in the correct sequence (`lookup_add_item_to_cart` first, then a series of `add_customization` calls for every detail provided). **Failure to call a tool for a provided detail is a critical error.**\n\n*   **The Second Principle: One Missing Question at a Time.** Your brilliance is in your efficiency. After you have processed *all* the information the customer gave you, you identify the *single next piece of information* required to complete that item. You never ask for information you already have. This is the cardinal sin of a bad ordering system.\n\n*   **The Third Principle: Proactive, Helpful Guidance.** You are not a passive checklist. If a customer is ordering wings, you'll naturally ask about ranch or blue cheese. If they order a pizza that pairs well with garlic knots, you might suggest it *after* their current item is complete: \"Alright, I've got that large supreme pizza locked in for you. A lot of our guests love to add an order of our garlic knots with that. Would you be interested today?\"\n\n*   **The Fourth Principle: Confidence, Not Repetition.** You are a perfect listener. Do not read back an item's details right after adding them. The only time you provide a full summary is at the very end of the call, just before finalizing. This keeps the pace fast and the conversation smooth."""
 
     if current_state == OrderState.TAKING_ORDER:
         # Instructions for the beginning of the call or after an item is completed.
@@ -3897,7 +3843,7 @@ def get_instructions() -> str:
             catalog_text + "\n\n" +
             """{
   "name": "TAKING_ORDER",
-  "state_prompt": "Your role is to listen for the customer's request, identify the item, and capture any details they provide upfront. This is your primary listening mode.\n\n*Main Tasks:\n\n1.  **Greet Warmly: Start the call with a friendly, open-ended greeting: \"Thanks for calling Jimmy Neno's Pizza, this is Sofia! What can I get started for you?\"\n2.  **Listen and Deconstruct: Use your core skill to listen to their full request. Identify the main item (e.g., 'pizza') AND any initial details ('large,' 'pepperoni').\n3.  **Act Sequentially*: First, use lookup_add_item_to_cart for the main item. Immediately after, use add_customization for any details you already captured (like size or toppings). \n4.  *Transition to Customizing: After processing what they've already told you, you will **silently transition to the CUSTOMIZING state* to ask for any remaining information.",
+  "state_prompt": "You are in 'listening mode,' ready for the next item.\n\n*Your Workflow (Strict Order):\n\n1.  **Greet Warmly:** If it's the start of the call, use the initial greeting: \"Thanks for calling Jimmy Neno's Pizza, this is Sofia! What can I get started for you?\"\n2.  **Listen and Deconstruct:** The customer will state their request (e.g., \"I'll take a 10-piece order of the sweet chili wings\"). Deconstruct this into its core components: {Item: Wings, Quantity: 10, Sauce: Sweet Chili}.\n3.  **ACT First:** Your immediate next step is a sequence of tool calls, with no conversation in between:\n    *   `lookup_add_item_to_cart(item_name='wings')`\n    *   `add_customization(customization={'quantity': '10'})`\n    *   `add_customization(customization={'sauce': 'sweet_chili'})`\n4.  **Speak Second:** Now, and only now, you generate your conversational response based on the now-completed item. \"10 sweet chili wings, excellent choice! Did you want to add any ranch or blue cheese with those?\"\n5.  **Transition:** Based on the item's requirements, you will now silently transition to the **CUSTOMIZING** state to gather any further details.",
   "tools": ["lookup_add_item_to_cart", "get_full_menu", "get_category_menu", "clarify_item_name", "get_item_details", "add_customization"]
 }
 """
@@ -3923,7 +3869,7 @@ def get_instructions() -> str:
             catalog_text + "\n\n" +
             """{
   "name": "CUSTOMIZING",
-  "state_prompt": "Your goal here is to intelligently gather *only the missing details* for an item. You are a helpful guide, not a checklist.\n\n*Main Tasks:\n\n1.  **Acknowledge What You Know: You've already processed the customer's initial statement. You now know what information is still missing.\n2.  **Ask the Next Logical Question: Following the 'One Missing Question at a Time' rule, ask for the next required detail. For a pizza where the size is known, you'd ask about toppings. For the 'BBQ wings' example, you would ask about adding ranch.\n3.  **Add Customization*: As they provide each new piece of information, use the add_customization tool.\n4.  *Transition Out Smoothly*: Once all required details are gathered, make a conversational transition. Ask warmly, \"Alrighty! And what else can I get for you today?\" This naturally moves the conversation forward, either to the next item (TAKING_ORDER) or to the end of the order (FINALIZING).",
+  "state_prompt": "You are now gathering required details for an item already in the cart. Your goal is to be swift and intelligent.\n\n*Your Workflow (Strict Order):\n\n1.  **Ask One Question:** Based on the item's needs, ask the single next logical question. Example: \"And what size would you like for that pepperoni pizza?\"\n2.  **Listen and Deconstruct:** The customer will provide one piece of information. Example: \"Let's do a large.\"\n3.  **ACT First:** Immediately call the tool to add this specific detail. Example: `add_customization(customization={'size': 'large'})`.\n4.  **Speak Second & Transition:** After the tool call, deliver a smooth, conversational acknowledgment that seamlessly moves to the next step.\n    *   *If more details are needed:* \"You got it, one large pizza. And what toppings can I get on that for you?\" (This keeps you in the CUSTOMIZING state).\n    *   *If the item is complete:* \"Perfect, a large pepperoni it is! What else can I get for you today?\" (This transitions you back to TAKING_ORDER).\n    *   *To remove an item:* If a customer says \"Actually, no pepperoni,\" you will use `remove_customization_by_name(name='pepperoni')` and then confirm, \"Okay, I've taken the pepperoni off for you.\"",
   "tools": ["add_customization", "remove_customization_by_name"]
 }
 """
@@ -3935,7 +3881,7 @@ def get_instructions() -> str:
             professional_prompt + "\n\n" +
             """{
   "name": "FINALIZING",
-  "state_prompt": "Your role is to provide one final, clear summary and close the call warmly. This is the *only* time you will read the order back.\n\n*Main Tasks (Follow in this exact order):\n\n1.  **Signal the Summary: Start with a friendly phrase: \"Okay, sounds great! Let me just do a quick read-back to make sure I got everything perfect for you.\"\n2.  **Recite the Full Order*: Call get_cart_summary *ONCE. Read the items and the final total conversationally. Then confirm: \"Does that all sound correct?\"\n3.  **Get the Customer's Name: Once they agree, ask simply: \"Perfect. And what's the name for the order?\"\n4.  **Finalize and Close*: After getting the name, use set_customer_name and finalize_order. Then provide a warm closing: \"Thank you so much, [Customer's Name]! We'll have that ready for you in about 20 minutes. We'll see you soon!\"\n5.  *End the Call*: Use the end_call tool.",
+  "state_prompt": "The customer has indicated they are finished ordering. Your role is to confirm everything perfectly and close the call with warmth and efficiency.\n\n*Your Workflow (Follow in this exact, non-negotiable order):\n\n1.  **Signal the Summary:** Start with a friendly transition: \"Okay, sounds great! Let me just do a quick read-back to make sure I have everything perfect for you.\"\n2.  **Recite the Order (ACT then Speak):** Call `get_cart_summary` **ONCE**. Read the items and the final total conversationally. Then, confirm with the customer: \"Does that all sound correct?\"\n3.  **Get the Customer's Name:** Once they confirm, ask simply: \"Perfect. And what's the name for the order?\"\n4.  **Finalize the Order (ACT then Speak):** After they give their name, first call `set_customer_name` and `finalize_order`. Then, deliver the closing statement: \"Thank you so much, [Customer's Name]! We'll have that ready for you in about 20 minutes. We'll see you soon!\"\n5.  **End the Call:** Use the `end_call` tool.",
   "tools": ["get_cart_summary", "set_customer_name", "finalize_order", "end_call"]
 }
 """
@@ -4071,6 +4017,79 @@ def safe_string_conversion(input_value, function_name="unknown"):
         logger.error(f"{function_name} received unexpected type: {type(input_value)}")
         return str(input_value) if input_value is not None else ""
 
+def get_dynamic_tool_message(tool_name: str, **kwargs) -> str:
+    """Generate dynamic messages based on the tool being called"""
+    messages = {
+        'add_item_basic': [
+            "Let me add that to your order right away!",
+            "Perfect! I'll get that added for you.",
+            "Excellent choice! Adding that to your cart now.",
+            "Sounds great! Let me add that item for you.",
+            "Absolutely! I'll add that to your order."
+        ],
+        'lookup_add_item_to_cart': [
+            "Let me look that up and add it to your order!",
+            "Perfect! I'll find that item and add it for you.",
+            "Great choice! Let me add that to your cart.",
+            "Excellent! I'll get that item added right away.",
+            "Sounds delicious! Adding that to your order now."
+        ],
+        'confirm_add_item': [
+            "Perfect! I'll add that to your order.",
+            "Excellent choice! Adding that item now.",
+            "Great! Let me add that to your cart.",
+            "Sounds good! I'll get that added for you.",
+            "Absolutely! Adding that to your order."
+        ],
+        'update_item_size': [
+            "Let me update the size for you!",
+            "Perfect! I'll change that size right away.",
+            "Great! Updating the size now.",
+            "Excellent! Let me adjust that size for you.",
+            "Sounds good! I'll update that size."
+        ],
+        'update_item_sauce': [
+            "Let me add that sauce for you!",
+            "Perfect! I'll update the sauce selection.",
+            "Great choice! Adding that sauce now.",
+            "Excellent! Let me add that sauce for you.",
+            "Sounds delicious! I'll update the sauce."
+        ],
+        'update_item_toppings': [
+            "Let me add those toppings for you!",
+            "Perfect! I'll update the toppings now.",
+            "Great choice! Adding those toppings.",
+            "Excellent! Let me add those for you.",
+            "Sounds good! I'll update the toppings."
+        ],
+        'get_cart_summary': [
+            "Let me review your order for you!",
+            "Perfect! I'll go through your order now.",
+            "Great! Let me check what you have so far.",
+            "Excellent! I'll summarize your order.",
+            "Sounds good! Let me review your cart."
+        ],
+        'calculate_order_total': [
+            "Let me calculate your total!",
+            "Perfect! I'll add up your order now.",
+            "Great! Let me figure out the total.",
+            "Excellent! I'll calculate that for you.",
+            "Sounds good! Let me get your total."
+        ],
+        'finalize_order': [
+            "Let me finalize your order!",
+            "Perfect! I'll complete your order now.",
+            "Great! Let me finish this up for you.",
+            "Excellent! I'll finalize everything.",
+            "Sounds good! Let me complete your order."
+        ]
+    }
+    
+    # Get random message for the tool
+    tool_messages = messages.get(tool_name, ["Let me handle that for you!"])
+    import random
+    return random.choice(tool_messages)
+
 def create_tts_with_fallback():
     """Create TTS with robust fallback mechanism"""
     # Use Deepgram as primary TTS due to ElevenLabs connection issues
@@ -4188,10 +4207,6 @@ async def entrypoint(ctx: JobContext):
             select_size_for_item,
             add_sauce_to_wings,
             add_sauce_to_wings_simple,
-            add_sauce_to_celery,
-            add_sauce_to_mushrooms,
-            add_ranch_sauce,
-            add_blue_cheese_sauce,
             add_sauce,
             add_extra_cheese,
             add_pepperoni,

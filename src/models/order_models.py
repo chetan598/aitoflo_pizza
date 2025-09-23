@@ -42,7 +42,6 @@ class OrderSummary:
     customer_name: str
     items: List[CartItem]
     total: float
-    payment_method: str
     special_instructions: Optional[str]
 
 class ConversationContext:
@@ -65,7 +64,6 @@ class OrderSession:
         self.session_id: Optional[str] = None
         self.customer_name: Optional[str] = None
         self.customer_phone: Optional[str] = None
-        self.customer_address: Optional[str] = None
         self.cart: List[CartItem] = []
         self.state: OrderState = OrderState.TAKING_ORDER
         self.menu_data: Optional[List[MenuItem]] = None

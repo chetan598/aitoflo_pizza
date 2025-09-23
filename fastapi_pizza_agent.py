@@ -60,10 +60,8 @@ class RemoveItemRequest(BaseModel):
 class CustomerInfoRequest(BaseModel):
     name: str = Field(..., description="Customer name")
     phone: Optional[str] = Field(None, description="Customer phone number")
-    address: Optional[str] = Field(None, description="Customer address")
 
 class OrderCompletionRequest(BaseModel):
-    payment_method: str = Field(..., description="Payment method")
     special_instructions: Optional[str] = Field(None, description="Special instructions")
 
 class ChatMessage(BaseModel):
@@ -313,14 +311,12 @@ async def update_customer_info(
     try:
         session.customer_name = request.name
         session.customer_phone = request.phone
-        session.customer_address = request.address
         
         return {
             "message": "Customer information updated successfully",
             "customer_info": {
                 "name": session.customer_name,
-                "phone": session.customer_phone,
-                "address": session.customer_address
+                "phone": session.customer_phone
             }
         }
     except Exception as e:
@@ -351,7 +347,6 @@ async def complete_order(
             "order_id": str(uuid.uuid4()),
             "customer_name": session.customer_name,
             "customer_phone": session.customer_phone,
-            "customer_address": session.customer_address,
             "items": [
                 {
                     "itemId": item.itemId,
@@ -362,7 +357,6 @@ async def complete_order(
                 } for item in session.cart
             ],
             "total": total,
-            "payment_method": request.payment_method,
             "special_instructions": request.special_instructions,
             "timestamp": datetime.now().isoformat()
         }

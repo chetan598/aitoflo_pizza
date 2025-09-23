@@ -16,7 +16,7 @@ class OrderCompletionTools:
         self.utility = UtilityService()
     
     @function_tool
-    async def complete_order(self, action: str, payment_method: str = "cash", special_instructions: str = "") -> str:
+    async def complete_order(self, action: str, special_instructions: str = "") -> str:
         """
         Comprehensive order completion tool.
         Actions: 'place_order', 'get_order_summary', 'confirm_order', 'cancel_order'
@@ -36,7 +36,6 @@ class OrderCompletionTools:
                 customer_name=self.session.customer_name,
                 items=cart_items,
                 total=total,
-                payment_method=payment_method,
                 special_instructions=special_instructions
             )
             
@@ -47,7 +46,6 @@ class OrderCompletionTools:
                 order_text += f"- {item.itemName} x{item.quantity} - {self.utility.format_price_for_speech(total_price)}\n"
             
             order_text += f"\nTotal: {self.utility.format_price_for_speech(order_summary.total)}"
-            order_text += f"\nPayment: {order_summary.payment_method}"
             
             if order_summary.special_instructions:
                 order_text += f"\nSpecial instructions: {order_summary.special_instructions}"
