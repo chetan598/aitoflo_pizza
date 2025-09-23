@@ -1,6 +1,7 @@
 """
 Data models for the pizza ordering system
 """
+import uuid
 from enum import Enum
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
@@ -59,12 +60,22 @@ class ConversationContext:
             "items_mentioned": []
         }
 
+def generate_cart_id() -> str:
+    """Generate a unique cart ID"""
+    return f"cart_{uuid.uuid4().hex[:8]}"
+
 class OrderSession:
     def __init__(self):
-        self.session_id: Optional[str] = None
+        self.cart_id: Optional[str] = None
         self.customer_name: Optional[str] = None
         self.customer_phone: Optional[str] = None
         self.cart: List[CartItem] = []
         self.state: OrderState = OrderState.TAKING_ORDER
         self.menu_data: Optional[List[MenuItem]] = None
         self.conversation_context: ConversationContext = ConversationContext()
+    
+    def initialize_cart(self) -> str:
+        """Initialize a new cart and return the cart ID"""
+        if not self.cart_id:
+            self.cart_id = generate_cart_id()
+        return self.cart_id

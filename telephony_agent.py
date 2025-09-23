@@ -33,7 +33,7 @@ user_cart = []
 current_item_customizing = None
 current_size_selection = None  # Used for staged size selection
 current_session = None  # Store current session for call termination
-session_id = None  # Global session ID for cart management
+cart_id = None  # Global cart ID for cart management
 customer_name = None  # Store customer name for order
 
 # Conversation context to prevent repetitive questions
@@ -52,10 +52,10 @@ conversation_context = {
     }
 }
 
-def generate_session_id():
-    """Generate a unique session ID"""
+def generate_cart_id():
+    """Generate a unique cart ID"""
     import uuid
-    return f"session_{uuid.uuid4().hex[:8]}"
+    return f"cart_{uuid.uuid4().hex[:8]}"
 
 # Supabase configuration
 SUPABASE_URL = "https://obfjfvxwqmhrzsntxkfy.supabase.co/functions/v1/fetch_menu"
@@ -1150,7 +1150,7 @@ def add_item_to_cart_safe(item: Dict, quantity: int = 1, customizations: List[Di
         "quantity": quantity,
         "selectedSize": selected_size or (item['sizes'][0].get('name', 'Regular') if item.get('sizes') and item['sizes'] else 'Regular'),
         "customizations": customizations or [],
-        "sessionId": session_id
+        "cartId": cart_id
     }
     
     user_cart.append(cart_item)
@@ -2196,7 +2196,7 @@ async def update_item_customization(item_name: str, customization_type: str, old
 @function_tool
 async def add_item_basic(item_name: str, quantity: int = 1, ctx: RunContext = None) -> str:
     """Add item to cart directly - no confirmation needed to avoid repeated questions"""
-    global user_cart, current_item_customizing, customization_step, session_id
+    global user_cart, current_item_customizing, customization_step, cart_id
     
     # Generate and speak dynamic message immediately when tool starts (don't wait)
     if ctx:
@@ -2214,8 +2214,8 @@ async def add_item_basic(item_name: str, quantity: int = 1, ctx: RunContext = No
         return "I didn't catch that. Could you please tell me what you'd like to order?"
     
     # Generate session ID if not exists
-    if not session_id:
-        session_id = generate_session_id()
+    if not cart_id:
+        cart_id = generate_cart_id()
     
     # Find item by name
     item = get_menu_item_by_name(item_name)
@@ -2229,7 +2229,7 @@ async def add_item_basic(item_name: str, quantity: int = 1, ctx: RunContext = No
 @function_tool
 async def confirm_add_item(item_name: str, quantity: int = 1, ctx: RunContext = None) -> str:
     """Add item to cart with duplicate prevention - no repeated confirmations"""
-    global current_item_customizing, customization_step, session_id
+    global current_item_customizing, customization_step, cart_id
     
     # Generate and speak dynamic message immediately when tool starts (don't wait)
     if ctx:
@@ -3891,13 +3891,13 @@ def get_instructions() -> str:
 class CustomAgentSession(AgentSession):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.session_id = f"session_{id(self)}"
+        self.cart_id = f"cart_{id(self)}"
         self.start_time = asyncio.get_event_loop().time()
         self._last_activity = self.start_time
         self.menu_data = []  # Store raw menu data for ID-based lookup
         self._vad_response_delay = 0.2  # Reduced delay for faster response
         self._last_speech_time = 0
-        logger.info(f"New session started: {self.session_id}")
+        logger.info(f"New session started: {self.cart_id}")
     
     def _update_speech_activity(self):
         """Update the last speech time when user is detected speaking"""
@@ -3969,12 +3969,12 @@ class CustomAgentSession(AgentSession):
                     )
                     break
                 except asyncio.TimeoutError:
-                    logger.warning(f"Response generation timeout in session {self.session_id}, attempt {attempt + 1}")
+                    logger.warning(f"Response generation timeout in cart {self.cart_id}, attempt {attempt + 1}")
                     if attempt >= 10:  # Only give up after 10 attempts
                         return "I'm having trouble processing your request. Could you please repeat what you'd like to order?"
                     await asyncio.sleep(0.5)  # Shorter pause for faster retry
                 except Exception as e:
-                    logger.error(f"Response generation error in session {self.session_id}, attempt {attempt + 1}: {e}")
+                    logger.error(f"Response generation error in cart {self.cart_id}, attempt {attempt + 1}: {e}")
                     if attempt >= 10:  # Only give up after 10 attempts
                         return "I'm having trouble processing your request. Could you please repeat what you'd like to order?"
                     await asyncio.sleep(0.5)  # Shorter pause for faster retry
@@ -3984,7 +3984,7 @@ class CustomAgentSession(AgentSession):
             
             return response
         except Exception as e:
-            logger.error(f"Critical error in session {self.session_id}: {str(e)}")
+            logger.error(f"Critical error in cart {self.cart_id}: {str(e)}")
             # Return a simple response that won't cause TTS issues and keep the conversation going
             return "I'm here to help! What would you like to order today?"
 
@@ -3992,14 +3992,14 @@ class CustomAgentSession(AgentSession):
         """End the call gracefully after order completion"""
         try:
             if hasattr(self, 'room') and self.room:
-                logger.info(f"Ending call for session {self.session_id}")
+                logger.info(f"Ending call for cart {self.cart_id}")
                 # Disconnect the room to end the call
                 await self.room.disconnect()
-                print(f"CALL DISCONNECTED - Session {self.session_id} ended")
+                print(f"CALL DISCONNECTED - Cart {self.cart_id} ended")
             else:
-                logger.warning(f"No room available to disconnect for session {self.session_id}")
+                logger.warning(f"No room available to disconnect for cart {self.cart_id}")
         except Exception as e:
-            logger.error(f"Error ending call for session {self.session_id}: {str(e)}")
+            logger.error(f"Error ending call for cart {self.cart_id}: {str(e)}")
 
 def safe_string_conversion(input_value, function_name="unknown"):
     """Safely convert input to string, handling SpeechHandle and other objects"""

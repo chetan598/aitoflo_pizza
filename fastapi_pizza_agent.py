@@ -23,7 +23,7 @@ from config.settings import SUPABASE_URL, SUPABASE_HEADERS, RESTAURANT_ID
 from services.menu_service import MenuService
 from services.order_service import OrderService
 from services.utility_service import UtilityService
-from models.order_models import OrderState, CartItem, OrderSession
+from models.order_models import OrderState, CartItem, OrderSession, generate_cart_id
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -49,28 +49,33 @@ class AddItemRequest(BaseModel):
     size: Optional[str] = Field(None, description="Size selection")
     quantity: int = Field(1, description="Quantity to add")
     customizations: List[str] = Field(default_factory=list, description="Customizations")
+    cart_id: Optional[str] = Field(None, description="Cart ID")
 
 class UpdateQuantityRequest(BaseModel):
     item_name: str = Field(..., description="Name of the item to update")
     quantity: int = Field(..., description="New quantity")
+    cart_id: Optional[str] = Field(None, description="Cart ID")
 
 class RemoveItemRequest(BaseModel):
     item_name: str = Field(..., description="Name of the item to remove")
+    cart_id: Optional[str] = Field(None, description="Cart ID")
 
 class CustomerInfoRequest(BaseModel):
     name: str = Field(..., description="Customer name")
     phone: Optional[str] = Field(None, description="Customer phone number")
+    cart_id: Optional[str] = Field(None, description="Cart ID")
 
 class OrderCompletionRequest(BaseModel):
     special_instructions: Optional[str] = Field(None, description="Special instructions")
+    cart_id: Optional[str] = Field(None, description="Cart ID")
 
 class ChatMessage(BaseModel):
     message: str = Field(..., description="User message")
-    session_id: Optional[str] = Field(None, description="Session ID")
+    cart_id: Optional[str] = Field(None, description="Cart ID")
 
 class ChatResponse(BaseModel):
     response: str = Field(..., description="Agent response")
-    session_id: str = Field(..., description="Session ID")
+    cart_id: str = Field(..., description="Cart ID")
     cart_summary: Optional[str] = Field(None, description="Current cart summary")
 
 # Application lifespan
@@ -102,15 +107,15 @@ app.add_middleware(
 )
 
 # Dependency to get or create session
-async def get_session(session_id: Optional[str] = None) -> OrderSession:
-    if not session_id:
-        session_id = str(uuid.uuid4())
+async def get_session(cart_id: Optional[str] = None) -> OrderSession:
+    if not cart_id:
+        cart_id = generate_cart_id()
     
-    if session_id not in order_sessions:
-        order_sessions[session_id] = OrderSession()
-        order_sessions[session_id].session_id = session_id
+    if cart_id not in order_sessions:
+        order_sessions[cart_id] = OrderSession()
+        order_sessions[cart_id].cart_id = cart_id
     
-    return order_sessions[session_id]
+    return order_sessions[cart_id]
 
 # Health check endpoint
 @app.get("/health")
@@ -118,7 +123,7 @@ async def health_check():
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
 # Menu endpoints
-@app.get("/menu")
+@app.get("/api/menu")
 async def get_menu():
     """Get the complete menu"""
     try:
@@ -128,7 +133,7 @@ async def get_menu():
         logger.error(f"Error fetching menu: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch menu")
 
-@app.get("/menu/categories")
+@app.get("/api/menu/categories")
 async def get_menu_categories():
     """Get all menu categories"""
     try:
@@ -138,14 +143,14 @@ async def get_menu_categories():
         logger.error(f"Error fetching categories: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch categories")
 
-@app.post("/menu/search", response_model=MenuSearchResponse)
-async def search_menu(request: MenuSearchRequest):
+@app.get("/api/menu/search")
+async def search_menu(query: str, limit: int = 5, min_score: float = 0.3):
     """Search menu items with fuzzy matching"""
     try:
         matches = menu_service.fuzzy_search_items(
-            request.query, 
-            limit=request.limit, 
-            min_score=request.min_score
+            query, 
+            limit=limit, 
+            min_score=min_score
         )
         return MenuSearchResponse(
             items=[match['item'] for match in matches],
@@ -155,7 +160,7 @@ async def search_menu(request: MenuSearchRequest):
         logger.error(f"Error searching menu: {e}")
         raise HTTPException(status_code=500, detail="Failed to search menu")
 
-@app.get("/menu/item/{item_id}")
+@app.get("/api/menu/item")
 async def get_item_details(item_id: str):
     """Get detailed information about a specific menu item"""
     try:
@@ -170,13 +175,13 @@ async def get_item_details(item_id: str):
         raise HTTPException(status_code=500, detail="Failed to fetch item details")
 
 # Order management endpoints
-@app.post("/order/add-item")
-async def add_item_to_order(
-    request: AddItemRequest,
-    session: OrderSession = Depends(get_session)
-):
+@app.post("/api/order/add-item")
+async def add_item_to_order(request: AddItemRequest):
     """Add an item to the order"""
     try:
+        # Get or create session with cart_id from request
+        session = await get_session(request.cart_id)
+        
         item = menu_service.get_item_by_id(request.item_id)
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
@@ -195,6 +200,7 @@ async def add_item_to_order(
         
         return {
             "message": f"Added {cart_item.itemName} to your order",
+            "cart_id": session.cart_id,
             "cart_item": {
                 "itemId": cart_item.itemId,
                 "itemName": cart_item.itemName,
@@ -210,13 +216,13 @@ async def add_item_to_order(
         logger.error(f"Error adding item to order: {e}")
         raise HTTPException(status_code=500, detail="Failed to add item to order")
 
-@app.put("/order/update-quantity")
-async def update_item_quantity(
-    request: UpdateQuantityRequest,
-    session: OrderSession = Depends(get_session)
-):
+@app.put("/api/order/update-quantity")
+async def update_item_quantity(request: UpdateQuantityRequest):
     """Update quantity of an item in the order"""
     try:
+        # Get or create session with cart_id from request
+        session = await get_session(request.cart_id)
+        
         order_service = OrderService()
         order_service.cart = session.cart
         order_service.state = session.state
@@ -230,6 +236,7 @@ async def update_item_quantity(
         
         return {
             "message": f"Updated {request.item_name} quantity to {request.quantity}",
+            "cart_id": session.cart_id,
             "cart_summary": order_service.get_cart_summary()
         }
     except HTTPException:
@@ -238,13 +245,13 @@ async def update_item_quantity(
         logger.error(f"Error updating item quantity: {e}")
         raise HTTPException(status_code=500, detail="Failed to update item quantity")
 
-@app.delete("/order/remove-item")
-async def remove_item_from_order(
-    request: RemoveItemRequest,
-    session: OrderSession = Depends(get_session)
-):
+@app.delete("/api/order/remove-item")
+async def remove_item_from_order(request: RemoveItemRequest):
     """Remove an item from the order"""
     try:
+        # Get or create session with cart_id from request
+        session = await get_session(request.cart_id)
+        
         order_service = OrderService()
         order_service.cart = session.cart
         order_service.state = session.state
@@ -258,6 +265,7 @@ async def remove_item_from_order(
         
         return {
             "message": f"Removed {request.item_name} from your order",
+            "cart_id": session.cart_id,
             "cart_summary": order_service.get_cart_summary()
         }
     except HTTPException:
@@ -266,14 +274,18 @@ async def remove_item_from_order(
         logger.error(f"Error removing item from order: {e}")
         raise HTTPException(status_code=500, detail="Failed to remove item from order")
 
-@app.get("/order/cart")
-async def get_cart(session: OrderSession = Depends(get_session)):
+@app.get("/api/order/cart")
+async def get_cart(cart_id: Optional[str] = None):
     """Get current cart contents"""
     try:
+        # Get or create session with cart_id from query parameter
+        session = await get_session(cart_id)
+        
         order_service = OrderService()
         order_service.cart = session.cart
         
         return {
+            "cart_id": session.cart_id,
             "cart_items": [
                 {
                     "itemId": item.itemId,
@@ -290,30 +302,37 @@ async def get_cart(session: OrderSession = Depends(get_session)):
         logger.error(f"Error fetching cart: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch cart")
 
-@app.delete("/order/clear")
-async def clear_cart(session: OrderSession = Depends(get_session)):
+@app.delete("/api/order/clear")
+async def clear_cart(cart_id: Optional[str] = None):
     """Clear the entire cart"""
     try:
+        # Get or create session with cart_id from query parameter
+        session = await get_session(cart_id)
+        
         session.cart = []
         session.state = OrderState.TAKING_ORDER
-        return {"message": "Cart cleared successfully"}
+        return {
+            "message": "Cart cleared successfully",
+            "cart_id": session.cart_id
+        }
     except Exception as e:
         logger.error(f"Error clearing cart: {e}")
         raise HTTPException(status_code=500, detail="Failed to clear cart")
 
 # Customer information endpoints
-@app.post("/customer/info")
-async def update_customer_info(
-    request: CustomerInfoRequest,
-    session: OrderSession = Depends(get_session)
-):
+@app.post("/api/customer/info")
+async def update_customer_info(request: CustomerInfoRequest):
     """Update customer information"""
     try:
+        # Get or create session with cart_id from request
+        session = await get_session(request.cart_id)
+        
         session.customer_name = request.name
         session.customer_phone = request.phone
         
         return {
             "message": "Customer information updated successfully",
+            "cart_id": session.cart_id,
             "customer_info": {
                 "name": session.customer_name,
                 "phone": session.customer_phone
@@ -324,13 +343,13 @@ async def update_customer_info(
         raise HTTPException(status_code=500, detail="Failed to update customer information")
 
 # Order completion endpoint
-@app.post("/order/complete")
-async def complete_order(
-    request: OrderCompletionRequest,
-    session: OrderSession = Depends(get_session)
-):
+@app.post("/api/order/complete")
+async def complete_order(request: OrderCompletionRequest):
     """Complete the order"""
     try:
+        # Get or create session with cart_id from request
+        session = await get_session(request.cart_id)
+        
         if not session.cart:
             raise HTTPException(status_code=400, detail="Cart is empty")
         
@@ -345,6 +364,7 @@ async def complete_order(
         # Create order summary
         order_summary = {
             "order_id": str(uuid.uuid4()),
+            "cart_id": session.cart_id,
             "customer_name": session.customer_name,
             "customer_phone": session.customer_phone,
             "items": [
@@ -379,21 +399,21 @@ async def complete_order(
         raise HTTPException(status_code=500, detail="Failed to complete order")
 
 # WebSocket endpoint for real-time chat
-@app.websocket("/ws/{session_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str):
+@app.websocket("/api/ws/{cart_id}")
+async def websocket_endpoint(websocket: WebSocket, cart_id: str):
     """WebSocket endpoint for real-time communication"""
     await websocket.accept()
-    websocket_connections[session_id] = websocket
+    websocket_connections[cart_id] = websocket
     
     try:
         # Get or create session
-        session = await get_session(session_id)
+        session = await get_session(cart_id)
         
         # Send welcome message
         await websocket.send_json({
             "type": "message",
             "content": "Hello! Welcome to our pizza restaurant. I can help you with our menu, take your order, and manage customizations. How can I help you today?",
-            "session_id": session_id
+            "cart_id": cart_id
         })
         
         while True:
@@ -411,17 +431,17 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             await websocket.send_json({
                 "type": "message",
                 "content": response,
-                "session_id": session_id,
+                "cart_id": cart_id,
                 "cart_summary": session.cart and OrderService().get_cart_summary() or None
             })
             
     except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected for session {session_id}")
+        logger.info(f"WebSocket disconnected for cart {cart_id}")
     except Exception as e:
-        logger.error(f"WebSocket error for session {session_id}: {e}")
+        logger.error(f"WebSocket error for cart {cart_id}: {e}")
     finally:
-        if session_id in websocket_connections:
-            del websocket_connections[session_id]
+        if cart_id in websocket_connections:
+            del websocket_connections[cart_id]
 
 async def process_chat_message(message: str, session: OrderSession) -> str:
     """Process chat message and return AI response"""
