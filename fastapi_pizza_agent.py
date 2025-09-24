@@ -78,6 +78,26 @@ class ChatResponse(BaseModel):
     cart_id: str = Field(..., description="Cart ID")
     cart_summary: Optional[str] = Field(None, description="Current cart summary")
 
+# New payload models for converted endpoints
+class HealthCheckRequest(BaseModel):
+    timestamp: Optional[str] = Field(None, description="Optional timestamp for health check")
+
+class MenuRequest(BaseModel):
+    include_summary: bool = Field(True, description="Whether to include menu summary")
+
+class MenuCategoriesRequest(BaseModel):
+    include_count: bool = Field(False, description="Whether to include item count per category")
+
+class ItemDetailsRequest(BaseModel):
+    item_id: str = Field(..., description="ID of the menu item to get details for")
+
+class CartRequest(BaseModel):
+    cart_id: Optional[str] = Field(None, description="Cart ID")
+
+class ClearCartRequest(BaseModel):
+    cart_id: Optional[str] = Field(None, description="Cart ID")
+    confirm: bool = Field(False, description="Confirmation flag to clear cart")
+
 # Application lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -118,39 +138,49 @@ async def get_session(cart_id: Optional[str] = None) -> OrderSession:
     return order_sessions[cart_id]
 
 # Health check endpoint
-@app.get("/health")
-async def health_check():
+@app.post("/health")
+async def health_check(request: HealthCheckRequest):
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
 # Menu endpoints
-@app.get("/api/menu")
-async def get_menu():
+@app.post("/api/menu")
+async def get_menu(request: MenuRequest):
     """Get the complete menu"""
     try:
-        menu_summary = menu_service.get_menu_summary()
-        return {"menu": menu_service.menu_data, "summary": menu_summary}
+        result = {"menu": menu_service.menu_data}
+        if request.include_summary:
+            result["summary"] = menu_service.get_menu_summary()
+        return result
     except Exception as e:
         logger.error(f"Error fetching menu: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch menu")
 
-@app.get("/api/menu/categories")
-async def get_menu_categories():
+@app.post("/api/menu/categories")
+async def get_menu_categories(request: MenuCategoriesRequest):
     """Get all menu categories"""
     try:
         categories = menu_service.get_menu_categories()
-        return {"categories": categories}
+        result = {"categories": categories}
+        if request.include_count:
+            # Add item count per category if requested
+            category_counts = {}
+            for category in categories:
+                category_items = [item for item in menu_service.menu_data if item.get('category') == category]
+                category_counts[category] = len(category_items)
+            result["category_counts"] = category_counts
+        return result
     except Exception as e:
         logger.error(f"Error fetching categories: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch categories")
 
-@app.get("/api/menu/search")
-async def search_menu(query: str, limit: int = 5, min_score: float = 0.3):
+@app.post("/api/menu/search")
+async def search_menu(request: MenuSearchRequest):
     """Search menu items with fuzzy matching"""
     try:
         matches = menu_service.fuzzy_search_items(
-            query, 
-            limit=limit, 
-            min_score=min_score
+            request.query, 
+            limit=request.limit, 
+            min_score=request.min_score
         )
         return MenuSearchResponse(
             items=[match['item'] for match in matches],
@@ -160,11 +190,11 @@ async def search_menu(query: str, limit: int = 5, min_score: float = 0.3):
         logger.error(f"Error searching menu: {e}")
         raise HTTPException(status_code=500, detail="Failed to search menu")
 
-@app.get("/api/menu/item")
-async def get_item_details(item_id: str):
+@app.post("/api/menu/item")
+async def get_item_details(request: ItemDetailsRequest):
     """Get detailed information about a specific menu item"""
     try:
-        item = menu_service.get_item_by_id(item_id)
+        item = menu_service.get_item_by_id(request.item_id)
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
         return {"item": item}
@@ -274,12 +304,12 @@ async def remove_item_from_order(request: RemoveItemRequest):
         logger.error(f"Error removing item from order: {e}")
         raise HTTPException(status_code=500, detail="Failed to remove item from order")
 
-@app.get("/api/order/cart")
-async def get_cart(cart_id: Optional[str] = None):
+@app.post("/api/order/cart")
+async def get_cart(request: CartRequest):
     """Get current cart contents"""
     try:
-        # Get or create session with cart_id from query parameter
-        session = await get_session(cart_id)
+        # Get or create session with cart_id from request
+        session = await get_session(request.cart_id)
         
         order_service = OrderService()
         order_service.cart = session.cart
@@ -302,12 +332,15 @@ async def get_cart(cart_id: Optional[str] = None):
         logger.error(f"Error fetching cart: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch cart")
 
-@app.delete("/api/order/clear")
-async def clear_cart(cart_id: Optional[str] = None):
+@app.post("/api/order/clear")
+async def clear_cart(request: ClearCartRequest):
     """Clear the entire cart"""
     try:
-        # Get or create session with cart_id from query parameter
-        session = await get_session(cart_id)
+        # Get or create session with cart_id from request
+        session = await get_session(request.cart_id)
+        
+        if not request.confirm:
+            raise HTTPException(status_code=400, detail="Confirmation required to clear cart")
         
         session.cart = []
         session.state = OrderState.TAKING_ORDER
@@ -315,6 +348,8 @@ async def clear_cart(cart_id: Optional[str] = None):
             "message": "Cart cleared successfully",
             "cart_id": session.cart_id
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error clearing cart: {e}")
         raise HTTPException(status_code=500, detail="Failed to clear cart")
