@@ -246,7 +246,7 @@ async def add_item_to_order(request: AddItemRequest):
         logger.error(f"Error adding item to order: {e}")
         raise HTTPException(status_code=500, detail="Failed to add item to order")
 
-@app.put("/api/order/update-quantity")
+@app.post("/api/order/update-quantity")
 async def update_item_quantity(request: UpdateQuantityRequest):
     """Update quantity of an item in the order"""
     try:
@@ -275,7 +275,7 @@ async def update_item_quantity(request: UpdateQuantityRequest):
         logger.error(f"Error updating item quantity: {e}")
         raise HTTPException(status_code=500, detail="Failed to update item quantity")
 
-@app.delete("/api/order/remove-item")
+@app.post("/api/order/remove-item")
 async def remove_item_from_order(request: RemoveItemRequest):
     """Remove an item from the order"""
     try:
